@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	kruiseclientset "github.com/openkruise/kruise-api/client/clientset/versioned"
 	"github.com/tikv/pd/autoscale"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -94,7 +95,44 @@ func outsideConfig() (*restclient.Config, error) {
 // 	}
 // }
 
-func main() {
+func OpenkruiseTest() {
+	config, err := outsideConfig()
+	if err != nil {
+		panic(err.Error())
+	}
+	namespace := "default"
+	kruiseClient := kruiseclientset.NewForConfigOrDie(config)
+	cloneSetList, err := kruiseClient.AppsV1alpha1().CloneSets(namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+
+	fmt.Printf("len of cloneSetList: %v \n", len(cloneSetList.Items))
+	for _, cloneSet := range cloneSetList.Items {
+		fmt.Printf("cloneSet: %v \n", cloneSet)
+
+		newReplicas := new(int32)
+		*newReplicas = 7
+		// Modify object, such as replicas or template
+		cloneSet.Spec.Replicas = newReplicas
+		// cloneSet.Spec.cluster
+		cloneSet.Spec.ScaleStrategy.PodsToDelete = append(cloneSet.Spec.ScaleStrategy.PodsToDelete, "sample-data-44mqr", "sample-data-ntcvp")
+		// Update
+		// This might get conflict, should retry it
+		ret, err := kruiseClient.AppsV1alpha1().CloneSets(namespace).Update(context.TODO(), &cloneSet, metav1.UpdateOptions{})
+		if err != nil {
+			panic(err.Error())
+		} else {
+			fmt.Printf("changed cloneSet: %v \n", ret)
+		}
+
+	}
+
+}
+
+func main2() {
+	// ctx := context.Background()
+	// config := ctrl.GetConfigOrDie()
 
 	config, err := outsideConfig()
 
@@ -202,4 +240,10 @@ func main() {
 
 		time.Sleep(10 * time.Second)
 	}
+}
+
+func main() {
+	// OpenkruiseTest()
+	// main2()
+	autoscale.NewClusterManager()
 }

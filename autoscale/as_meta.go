@@ -13,11 +13,12 @@ type TenantDesc struct {
 }
 
 const (
-	DefaultMinCntOfPod = 1
-	DefaultMaxCntOfPod = 4
-	DefaultCoreOfPod   = 8
-	DefaultLowerLimit  = 0.2
-	DefaultHigherLimit = 0.8
+	DefaultMinCntOfPod    = 1
+	DefaultMaxCntOfPod    = 4
+	DefaultCoreOfPod      = 8
+	DefaultLowerLimit     = 0.2
+	DefaultHigherLimit    = 0.8
+	DefaultPrewarmPoolCap = 5
 )
 
 func NewTenantDescDefault() *TenantDesc {
@@ -39,18 +40,21 @@ func NewTenantDesc(minPods int, maxPods int) *TenantDesc {
 type AutoScaleMeta struct {
 	mu sync.Mutex
 	// Pod2tenant map[string]string
-	TenantMap  map[string]*TenantDesc
-	PodDescMap map[string]*PodDesc // tenant="prewarmed" if idle
+	TenantMap   map[string]*TenantDesc
+	PodDescMap  map[string]*PodDesc // tenant="prewarmed" if idle
+	PrewarmPods *TenantDesc
 }
 
 func NewAutoScaleMeta() *AutoScaleMeta {
 	return &AutoScaleMeta{
 		// Pod2tenant: make(map[string]string),
-		TenantMap:  make(map[string]*TenantDesc),
-		PodDescMap: make(map[string]*PodDesc)}
+		TenantMap:   make(map[string]*TenantDesc),
+		PodDescMap:  make(map[string]*PodDesc),
+		PrewarmPods: NewTenantDesc(0, DefaultPrewarmPoolCap),
+	}
 }
 
-func (cur *AutoScaleMeta) GetPodDesc(podName string, createOrGet bool) *PodDesc {
+func (cur *AutoScaleMeta) CreateOrGetPodDesc(podName string, createOrGet bool) *PodDesc {
 	val, ok := cur.PodDescMap[podName]
 	if !ok {
 		// if !createIfNotExist {
@@ -77,11 +81,13 @@ func (c *AutoScaleMeta) AddPod(podName string) bool {
 	if ok {
 		return false
 	}
-	podDesc := c.GetPodDesc(podName, true)
-	if podDesc == nil {
-		return false
-	}
+	// podDesc := c.CreateOrGetPodDesc(podName, true)
+	// if podDesc == nil {
+	// return false
+	// }
+	podDesc := &PodDesc{}
 	c.PodDescMap[podName] = podDesc
+	c.PrewarmPods.Pods[podName] = podDesc
 	return true
 }
 
