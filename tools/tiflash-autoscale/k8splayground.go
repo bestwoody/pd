@@ -245,5 +245,7 @@ func main2() {
 func main() {
 	// OpenkruiseTest()
 	// main2()
-	autoscale.NewClusterManager()
+	cm := autoscale.NewClusterManager()
+	time.Sleep(60 * time.Second)
+	cm.Shutdown()
 }

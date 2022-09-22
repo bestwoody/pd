@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 
 	"github.com/openkruise/kruise-api/apps/v1alpha1"
 	kruiseclientset "github.com/openkruise/kruise-api/client/clientset/versioned"
@@ -12,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	restclient "k8s.io/client-go/rest"
@@ -44,13 +47,17 @@ func getK8sConfig() (*restclient.Config, error) {
 
 //TODO mutex protection
 type ClusterManager struct {
-	Namespace    string
-	CloneSetName string
-	*AutoScaleMeta
-	K8sCli     *kubernetes.Clientset
-	MetricsCli *metricsv.Clientset
-	Cli        *kruiseclientset.Clientset
-	CloneSet   *v1alpha1.CloneSet
+	Namespace     string
+	CloneSetName  string
+	AutoScaleMeta *AutoScaleMeta
+	K8sCli        *kubernetes.Clientset
+	MetricsCli    *metricsv.Clientset
+	Cli           *kruiseclientset.Clientset
+	CloneSet      *v1alpha1.CloneSet
+	wg            sync.WaitGroup
+	shutdown      int32 // atomic
+	watchMu       sync.Mutex
+	watcher       watch.Interface
 }
 
 func Int32Ptr(val int32) *int32 {
@@ -59,6 +66,105 @@ func Int32Ptr(val int32) *int32 {
 	return &val
 }
 
+func (c *ClusterManager) Shutdown() {
+	atomic.StoreInt32(&c.shutdown, 1)
+	c.watchMu.Lock()
+	c.watcher.Stop()
+	c.watchMu.Unlock()
+	c.wg.Wait()
+}
+
+func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
+	defer c.wg.Done()
+	for {
+		if atomic.LoadInt32(&c.shutdown) != 0 {
+			return
+		}
+		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
+		watcher, err := c.K8sCli.CoreV1().Pods(c.Namespace).Watch(context.TODO(),
+			metav1.ListOptions{
+				LabelSelector:   labels.Set(labelSelector.MatchLabels).String(),
+				ResourceVersion: resourceVersion,
+			})
+
+		if err != nil {
+			panic(err.Error())
+		}
+
+		c.watchMu.Lock()
+		c.watcher = watcher
+		c.watchMu.Unlock()
+
+		ch := watcher.ResultChan()
+
+		// LISTEN TO CHANNEL
+		for {
+			e, more := <-ch
+			if !more {
+				fmt.Printf("watchPods channel closed\n")
+				break
+			}
+			pod, ok := e.Object.(*v1.Pod)
+			if !ok {
+				continue
+			}
+			resourceVersion = pod.ResourceVersion
+			switch e.Type {
+			case watch.Added:
+				c.AutoScaleMeta.UpdatePod(pod)
+			case watch.Modified:
+				c.AutoScaleMeta.UpdatePod(pod)
+			case watch.Deleted:
+				c.AutoScaleMeta.HandleK8sDelPodEvent(pod)
+			default:
+				fallthrough
+			case watch.Error, watch.Bookmark: //TODO handle it
+				continue
+			}
+			// fmt.Printf("act,ns,name,phase,reason,ip,noOfContainer: %v %v %v %v %v %v %v\n", e.Type,
+			// 	pod.Namespace,
+			// 	pod.Name,
+			// 	pod.Status.Phase,
+			// 	pod.Status.Reason,
+			// 	pod.Status.PodIP,
+			// 	len(pod.Status.ContainerStatuses))
+
+			// endpoints, ok := event.Object.(*v1.Endpoints)
+			// if !ok {
+			// 	panic("Could not cast to Endpoint")
+			// }
+			// fmt.Printf("%v %v\n", event.Type, event.Object)
+			// for _, endpoint := range endpoints.Subsets {
+			// 	for _, address := range endpoint.Addresses {
+			// 		fmt.Printf("%v\n", address.IP)
+			// 	}
+			// }
+		}
+	}
+
+}
+
+// ignore error
+func (c *ClusterManager) loadPods() string {
+	//TODO implements
+	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
+	pods, err := c.K8sCli.CoreV1().Pods(c.Namespace).List(context.TODO(),
+		metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
+	if err != nil {
+		return ""
+	}
+	resVer := pods.ListMeta.ResourceVersion
+	/// TODO
+
+	// for _, pod := range pods.Items {
+	// 	//TODO apply change of pod
+	// 	// c.AutoScaleMeta.ApplyPod(pod)
+	// 	// c. ApplyPod(pod)
+	// }
+	return resVer
+}
+
+//TODO load existed pods
 func (c *ClusterManager) initK8sClient() {
 	config, err := getK8sConfig()
 	if err != nil {
@@ -99,6 +205,7 @@ func (c *ClusterManager) initK8sClient() {
 	}
 	if !found {
 		volumeName := "tiflash-readnode-data-vol"
+		/// TODO ensure one pod one node and fixed nodegroup
 		//create cloneSet since there is no desired cloneSet
 		cloneSet := v1alpha1.CloneSet{
 			ObjectMeta: metav1.ObjectMeta{
@@ -107,7 +214,7 @@ func (c *ClusterManager) initK8sClient() {
 					"app": c.CloneSetName,
 				}},
 			Spec: v1alpha1.CloneSetSpec{
-				Replicas: Int32Ptr(int32(c.PrewarmPods.MaxCntOfPod)),
+				Replicas: Int32Ptr(int32(c.AutoScaleMeta.PrewarmPods.MaxCntOfPod)),
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						"app": c.CloneSetName,
@@ -160,15 +267,48 @@ func (c *ClusterManager) initK8sClient() {
 	if err != nil {
 		panic(err.Error())
 	}
-	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
-	pods, err := c.K8sCli.CoreV1().Pods(c.Namespace).List(context.TODO(),
-		metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
-	if err != nil {
-		panic(err.Error())
-	}
-	for _, pod := range pods.Items {
-		fmt.Println(pod.Name, pod.Status.PodIP)
-	}
+	resVer := c.loadPods()
+	c.wg.Add(1)
+	go c.watchPodsLoop(resVer)
+	// labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
+	// watcher, err := c.K8sCli.CoreV1().Pods(c.Namespace).Watch(context.TODO(),
+	// 	metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
+	// if err != nil {
+	// 	panic(err.Error())
+	// }
+
+	// ch := watcher.ResultChan()
+
+	// // LISTEN TO CHANNEL
+	// for {
+	// 	e := <-ch
+	// 	pod, ok := e.Object.(*v1.Pod)
+	// 	if !ok {
+	// 		continue
+	// 	}
+	// 	fmt.Printf("act,ns,name,phase,reason,ip,noOfContainer: %v %v %v %v %v %v %v\n", e.Type,
+	// 		pod.Namespace,
+	// 		pod.Name,
+	// 		pod.Status.Phase,
+	// 		pod.Status.Reason,
+	// 		pod.Status.PodIP,
+	// 		len(pod.Status.ContainerStatuses))
+
+	// 	// endpoints, ok := event.Object.(*v1.Endpoints)
+	// 	// if !ok {
+	// 	// 	panic("Could not cast to Endpoint")
+	// 	// }
+	// 	// fmt.Printf("%v %v\n", event.Type, event.Object)
+	// 	// for _, endpoint := range endpoints.Subsets {
+	// 	// 	for _, address := range endpoint.Addresses {
+	// 	// 		fmt.Printf("%v\n", address.IP)
+	// 	// 	}
+	// 	// }
+	// }
+
+	// // for _, pod := range pods.Items {
+	// // fmt.Println(pod.Name, pod.Status.PodIP)
+	// // }
 }
 
 func NewClusterManager() *ClusterManager {
@@ -198,4 +338,8 @@ func AddNewPods(cli *kruiseclientset.Clientset, ns string, cloneSet *v1alpha1.Cl
 
 func (c *ClusterManager) AddNewPods(from int, delta int) (*v1alpha1.CloneSet, error) {
 	return AddNewPods(c.Cli, c.Namespace, c.CloneSet, from, delta)
+}
+
+func (c *ClusterManager) Wait() {
+	c.wg.Wait()
 }

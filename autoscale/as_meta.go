@@ -1,9 +1,15 @@
 package autoscale
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+
+	v1 "k8s.io/api/core/v1"
+)
 
 type PodDesc struct {
 	TenantName string
+	pod        *v1.Pod
 }
 
 type TenantDesc struct {
@@ -41,7 +47,7 @@ type AutoScaleMeta struct {
 	mu sync.Mutex
 	// Pod2tenant map[string]string
 	TenantMap   map[string]*TenantDesc
-	PodDescMap  map[string]*PodDesc // tenant="prewarmed" if idle
+	PodDescMap  map[string]*PodDesc
 	PrewarmPods *TenantDesc
 }
 
@@ -72,6 +78,77 @@ func (cur *AutoScaleMeta) CreateOrGetPodDesc(podName string, createOrGet bool) *
 		}
 		return val
 	}
+}
+
+func (c *AutoScaleMeta) AddPodDetail(podName string, pod *v1.Pod) {
+	// TODO implements
+}
+
+func (c *AutoScaleMeta) addPreWarmFromPending(podName string, desc *PodDesc) {
+	c.PrewarmPods.Pods[podName] = desc
+}
+
+func (c *AutoScaleMeta) handleChangeOfPodIP(pod *v1.Pod) {
+
+}
+
+func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
+	name := pod.Name
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	podDesc, ok := c.PodDescMap[name]
+	if !ok {
+		c.PodDescMap[name] = &PodDesc{pod: pod}
+		fmt.Printf("new Pod %v\n", name)
+	} else {
+		if podDesc.pod == nil {
+			//TODO handle
+			fmt.Printf("exception case of Pod %v\n", name)
+		} else {
+			if podDesc.pod.Status.PodIP == "" {
+				if pod.Status.PodIP != "" {
+					c.addPreWarmFromPending(name, podDesc)
+					fmt.Printf("preWarm Pod %v\n", name)
+				} else {
+					fmt.Printf("preparing Pod %v\n", name)
+				}
+
+			} else {
+				if podDesc.pod.Status.PodIP != pod.Status.PodIP {
+					c.handleChangeOfPodIP(pod)
+					fmt.Printf("ipChange Pod %v\n", name)
+				} else {
+					podDesc.pod = pod
+					fmt.Printf("keep Pod %v\n", name)
+				}
+			}
+		}
+	}
+}
+
+func (c *AutoScaleMeta) removePodFromTenant(pod *v1.Pod) {
+	/// TODO implemants
+}
+
+/// TODO  since we del pod on our own, we should think of corner case that accidental pod deletion by k8s
+
+func (c *AutoScaleMeta) handleAccidentalPodDeletion(pod *v1.Pod) {
+
+}
+
+func (c *AutoScaleMeta) HandleK8sDelPodEvent(pod *v1.Pod) bool {
+	name := pod.Name
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.PodDescMap[name]
+	if !ok {
+		return true
+	} else {
+		c.handleAccidentalPodDeletion(pod)
+		return false
+	}
+
+	// TODO implements
 }
 
 func (c *AutoScaleMeta) AddPod(podName string) bool {
