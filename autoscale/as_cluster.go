@@ -45,7 +45,7 @@ func getK8sConfig() (*restclient.Config, error) {
 	}
 }
 
-//TODO mutex protection
+// TODO mutex protection
 type ClusterManager struct {
 	Namespace     string
 	CloneSetName  string
@@ -56,6 +56,7 @@ type ClusterManager struct {
 	CloneSet      *v1alpha1.CloneSet
 	wg            sync.WaitGroup
 	shutdown      int32 // atomic
+	pendingCnt    int32 // atomic
 	watchMu       sync.Mutex
 	watcher       watch.Interface
 }
@@ -154,17 +155,13 @@ func (c *ClusterManager) loadPods() string {
 		return ""
 	}
 	resVer := pods.ListMeta.ResourceVersion
-	/// TODO
-
-	// for _, pod := range pods.Items {
-	// 	//TODO apply change of pod
-	// 	// c.AutoScaleMeta.ApplyPod(pod)
-	// 	// c. ApplyPod(pod)
-	// }
+	for _, pod := range pods.Items {
+		c.AutoScaleMeta.UpdatePod(&pod)
+	}
 	return resVer
 }
 
-//TODO load existed pods
+// TODO load existed pods
 func (c *ClusterManager) initK8sClient() {
 	config, err := getK8sConfig()
 	if err != nil {
@@ -317,8 +314,9 @@ func NewClusterManager() *ClusterManager {
 	return ret
 }
 
-//TODO mutex protection
+// TODO mutex protection
 func AddNewPods(cli *kruiseclientset.Clientset, ns string, cloneSet *v1alpha1.CloneSet, from int, delta int) (*v1alpha1.CloneSet, error) {
+	// TODO add mutex protection?
 	if delta <= 0 {
 		return cloneSet, fmt.Errorf("delta <= 0")
 	}

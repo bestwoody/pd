@@ -9,13 +9,34 @@ import (
 
 type PodDesc struct {
 	TenantName string
-	pod        *v1.Pod
+	Name       string
+	IP         string
+	// pod        *v1.Pod
+}
+
+func (c *PodDesc) AssignTenantWithMockConf(tenant string) bool {
+	return false
+	// TODO implement
+}
+
+func (c *PodDesc) HandleAssignError() {
+	// TODO implements
+}
+
+func (c *PodDesc) UnassignTenantWithMockConf(tenant string) bool {
+	return false
+	// TODO implement
+}
+
+func (c *PodDesc) HandleUnassignError() {
+	// TODO implements
 }
 
 type TenantDesc struct {
 	MinCntOfPod int
 	MaxCntOfPod int
 	Pods        map[string]*PodDesc
+	mu          sync.Mutex
 }
 
 const (
@@ -49,6 +70,7 @@ type AutoScaleMeta struct {
 	TenantMap   map[string]*TenantDesc
 	PodDescMap  map[string]*PodDesc
 	PrewarmPods *TenantDesc
+	pendingCnt  int32 // atomic
 }
 
 func NewAutoScaleMeta() *AutoScaleMeta {
@@ -85,6 +107,7 @@ func (c *AutoScaleMeta) AddPodDetail(podName string, pod *v1.Pod) {
 }
 
 func (c *AutoScaleMeta) addPreWarmFromPending(podName string, desc *PodDesc) {
+	c.pendingCnt-- // dec pending cnt
 	c.PrewarmPods.Pods[podName] = desc
 }
 
@@ -97,37 +120,141 @@ func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	podDesc, ok := c.PodDescMap[name]
+	fmt.Printf("[updatePod] %v %v\n", name, pod.Status)
 	if !ok {
-		c.PodDescMap[name] = &PodDesc{pod: pod}
-		fmt.Printf("new Pod %v\n", name)
+		c.pendingCnt++ // inc pending cnt
+		c.PodDescMap[name] = &PodDesc{Name: name, IP: pod.Status.PodIP}
+		fmt.Printf("new Pod %v: %v\n", name, pod.Status.PodIP)
 	} else {
-		if podDesc.pod == nil {
+		if podDesc.Name == "" {
 			//TODO handle
 			fmt.Printf("exception case of Pod %v\n", name)
 		} else {
-			if podDesc.pod.Status.PodIP == "" {
+			if podDesc.IP == "" {
 				if pod.Status.PodIP != "" {
 					c.addPreWarmFromPending(name, podDesc)
-					fmt.Printf("preWarm Pod %v\n", name)
+					fmt.Printf("preWarm Pod %v: %v\n", name, pod.Status.PodIP)
 				} else {
 					fmt.Printf("preparing Pod %v\n", name)
 				}
 
 			} else {
-				if podDesc.pod.Status.PodIP != pod.Status.PodIP {
-					c.handleChangeOfPodIP(pod)
-					fmt.Printf("ipChange Pod %v\n", name)
+				if pod.Status.PodIP == "" {
+					//TODO handle
+					c.handleAccidentalPodDeletion(pod)
+					fmt.Printf("accidental Deletion of Pod %v\n", name)
 				} else {
-					podDesc.pod = pod
-					fmt.Printf("keep Pod %v\n", name)
+					if podDesc.IP != pod.Status.PodIP {
+						c.handleChangeOfPodIP(pod)
+						fmt.Printf("ipChange Pod %v: %v -> %v\n", name, podDesc.IP, pod.Status.PodIP)
+					} else {
+						// podDesc.pod = pod
+						fmt.Printf("keep Pod %v\n", name)
+					}
 				}
 			}
 		}
 	}
 }
 
-func (c *AutoScaleMeta) removePodFromTenant(pod *v1.Pod) {
-	/// TODO implemants
+func SendGrpcReq() {
+
+}
+
+func (c *AutoScaleMeta) getTenantLock(tenant string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.TenantMap[tenant]
+	if !ok {
+		return nil
+	} else {
+		return &v.mu
+	}
+}
+
+//TODO add pod level lock!!!
+
+// return cnt fail to add
+// -1 is error
+func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string) int {
+	cnt := addCnt
+	podsToAssign := make([]*PodDesc, 0, addCnt)
+	tMu := c.getTenantLock(tenant)
+	if tMu == nil {
+		return -1
+	}
+	tMu.Lock()
+	defer tMu.Unlock()
+	// check if tenant is valid again to prevent it has been removed
+	_, ok := c.TenantMap[tenant]
+	if !ok {
+		return -1
+	}
+
+	c.mu.Lock()
+	for k, v := range c.PrewarmPods.Pods {
+		if cnt > 0 {
+			podsToAssign = append(podsToAssign, v)
+			c.TenantMap[tenant].Pods[k] = v
+			delete(c.PrewarmPods.Pods, k)
+			cnt--
+		} else {
+			//enough pods, break early
+			break
+		}
+	}
+	c.mu.Unlock()
+	for _, v := range podsToAssign {
+		// TODO async call grpc assign api
+		// TODO go func() & wg.wait()
+		if !v.AssignTenantWithMockConf(tenant) {
+			v.HandleAssignError()
+		}
+	}
+	return cnt
+}
+
+func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
+	cnt := removeCnt
+	podsToUnassign := make([]*PodDesc, 0, removeCnt)
+	tMu := c.getTenantLock(tenant)
+	if tMu == nil {
+		return -1
+	}
+	tMu.Lock()
+	defer tMu.Unlock()
+	// check if tenant is valid again to prevent it has been removed
+	tenantDesc, ok := c.TenantMap[tenant]
+	if !ok {
+		return -1
+	}
+
+	c.mu.Lock()
+	for k, v := range tenantDesc.Pods {
+		if cnt > 0 {
+			podsToUnassign = append(podsToUnassign, v)
+			delete(tenantDesc.Pods, k)
+			// c.TenantMap[tenant].Pods[k] = v
+			// delete(c.PrewarmPods.Pods, k)
+			cnt--
+		} else {
+			//enough pods, break early
+			break
+		}
+	}
+	c.mu.Unlock()
+	for _, v := range podsToUnassign {
+		// TODO async call grpc unassign api
+		// TODO go func() & wg.wait()
+		if !v.UnassignTenantWithMockConf(tenant) {
+			v.HandleUnassignError()
+		} else {
+			c.mu.Lock()
+			c.PrewarmPods.Pods[v.Name] = v
+			c.mu.Unlock()
+		}
+	}
+	return cnt
 }
 
 /// TODO  since we del pod on our own, we should think of corner case that accidental pod deletion by k8s
@@ -151,6 +278,7 @@ func (c *AutoScaleMeta) HandleK8sDelPodEvent(pod *v1.Pod) bool {
 	// TODO implements
 }
 
+// for test
 func (c *AutoScaleMeta) AddPod(podName string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
