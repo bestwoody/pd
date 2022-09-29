@@ -145,16 +145,16 @@ func main2() {
 	tsContainer := autoscale.NewTimeSeriesContainer(5)
 	mclientset, err := metricsv.NewForConfig(config)
 	as_meta := autoscale.NewAutoScaleMeta()
-	as_meta.AddPod("web-0")
-	as_meta.AddPod("web-1")
-	as_meta.AddPod("web-2")
-	as_meta.AddPod("hello-node-7c7c59b7cb-6bsjg")
-	as_meta.SetupTenantWithDefaultArgs("t1")
-	as_meta.SetupTenantWithDefaultArgs("t2")
-	as_meta.UpdateTenant("web-0", "t1")
-	as_meta.UpdateTenant("web-1", "t1")
-	as_meta.UpdateTenant("web-2", "t1")
-	as_meta.UpdateTenant("hello-node-7c7c59b7cb-6bsjg", "t2")
+	as_meta.AddPod4Test("web-0")
+	as_meta.AddPod4Test("web-1")
+	as_meta.AddPod4Test("web-2")
+	as_meta.AddPod4Test("hello-node-7c7c59b7cb-6bsjg")
+	as_meta.SetupTenantWithDefaultArgs4Test("t1")
+	as_meta.SetupTenantWithDefaultArgs4Test("t2")
+	as_meta.UpdateTenant4Test("web-0", "t1")
+	as_meta.UpdateTenant4Test("web-1", "t1")
+	as_meta.UpdateTenant4Test("web-2", "t1")
+	as_meta.UpdateTenant4Test("hello-node-7c7c59b7cb-6bsjg", "t2")
 	// var lstTs int64
 	lstTsMap := make(map[string]int64)
 	hasNew := false
@@ -178,15 +178,15 @@ func main2() {
 				lstTsMap[pod.Name] = pod.Timestamp.Unix()
 
 				// if pod.Name == "web-0" {
-				cur_serires := tsContainer.SeriesMap[pod.Name]
-				mint, maxt := cur_serires.GetMinMaxTime()
+				snapshot := tsContainer.GetSnapshotOfTimeSeries(pod.Name)
+				// mint, maxt := cur_serires.GetMinMaxTime()
 				hasNew = true
-				fmt.Printf("%v mint,maxt: %v ~ %v\n", pod.Name, mint, maxt)
+				fmt.Printf("%v mint,maxt: %v ~ %v\n", pod.Name, snapshot.MinTime, snapshot.MaxTime)
 				fmt.Printf("%v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
-					cur_serires.Statistics[0].Avg(),
-					cur_serires.Statistics[0].Cnt(),
-					cur_serires.Statistics[1].Avg(),
-					cur_serires.Statistics[1].Cnt(),
+					snapshot.AvgOfCpu,
+					snapshot.SampleCntOfCpu,
+					snapshot.AvgOfMem,
+					snapshot.SampleCntOfMem,
 				)
 				// }
 			}
@@ -246,6 +246,7 @@ func main() {
 	// OpenkruiseTest()
 	// main2()
 	cm := autoscale.NewClusterManager()
+
 	time.Sleep(60 * time.Second)
 	cm.Shutdown()
 }

@@ -56,9 +56,92 @@ type ClusterManager struct {
 	CloneSet      *v1alpha1.CloneSet
 	wg            sync.WaitGroup
 	shutdown      int32 // atomic
-	pendingCnt    int32 // atomic
 	watchMu       sync.Mutex
 	watcher       watch.Interface
+
+	tsContainer *TimeSeriesContainer
+	lstTsMap    map[string]int64
+}
+
+// TODO expire of removed Pod in tsContainer,lstTsMap
+
+func (c *ClusterManager) collectMetrics() {
+
+	// tsContainer := NewTimeSeriesContainer(4)
+	// mclientset, err := metricsv.NewForConfig(config)
+	// as_meta := autoscale.NewAutoScaleMeta()
+	as_meta := c.AutoScaleMeta
+	// as_meta.AddPod4Test("web-0")
+	// as_meta.AddPod4Test("web-1")
+	// as_meta.AddPod4Test("web-2")
+	// as_meta.AddPod4Test("hello-node-7c7c59b7cb-6bsjg")
+	// as_meta.SetupTenantWithDefaultArgs4Test("t1")
+	// as_meta.SetupTenantWithDefaultArgs4Test("t2")
+	// as_meta.UpdateTenant4Test("web-0", "t1")
+	// as_meta.UpdateTenant4Test("web-1", "t1")
+	// as_meta.UpdateTenant4Test("web-2", "t1")
+	// as_meta.UpdateTenant4Test("hello-node-7c7c59b7cb-6bsjg", "t2")
+	// var lstTs int64
+	lstTsMap := c.lstTsMap
+	tsContainer := c.tsContainer
+	hasNew := false
+	for {
+		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
+
+		podMetricsList, err := c.MetricsCli.MetricsV1beta1().PodMetricses(c.Namespace).List(
+			context.TODO(), metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
+		if err != nil {
+			panic(err.Error())
+		}
+
+		for _, pod := range podMetricsList.Items {
+			// if pod.Name == "web-0" {
+			// 	fmt.Printf("podmetrics: %v \n", pod)
+			// }
+			lstTs, ok := lstTsMap[pod.Name]
+			if !ok || pod.Timestamp.Unix() != lstTs {
+				tsContainer.Insert(pod.Name, pod.Timestamp.Unix(),
+					[]float64{
+						pod.Containers[0].Usage.Cpu().AsApproximateFloat64(),
+						pod.Containers[0].Usage.Memory().AsApproximateFloat64(),
+					})
+				lstTsMap[pod.Name] = pod.Timestamp.Unix()
+
+				// if pod.Name == "web-0" {
+				// cur_serires := tsContainer.SeriesMap[pod.Name]
+				snapshot := tsContainer.GetSnapshotOfTimeSeries(pod.Name)
+				// mint, maxt := cur_serires.GetMinMaxTime()
+				hasNew = true
+				fmt.Printf("%v mint,maxt: %v ~ %v\n", pod.Name, snapshot.MinTime, snapshot.MaxTime)
+				fmt.Printf("%v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
+					snapshot.AvgOfCpu,
+					snapshot.SampleCntOfCpu,
+					snapshot.AvgOfMem,
+					snapshot.SampleCntOfMem,
+				)
+				// }
+			}
+
+		}
+
+		// just print tenant's avg metrics
+		if hasNew {
+			hasNew = false
+			tArr := []string{"t1", "t2"}
+			for _, tName := range tArr {
+				stats1 := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
+				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
+					stats1[0].Avg(),
+					stats1[0].Cnt(),
+					stats1[1].Avg(),
+					stats1[1].Cnt(),
+				)
+			}
+		}
+		// v, ok := as_meta.PodDescMap[]
+		// fmt.Printf("Podmetrics: %v \n", podMetricsList)
+	}
+
 }
 
 func Int32Ptr(val int32) *int32 {
@@ -308,9 +391,19 @@ func (c *ClusterManager) initK8sClient() {
 	// // }
 }
 
+// TODO must implement!!! necessary
+func (c *ClusterManager) recoverStatesOfPods() {
+	fmt.Println("[ClusterManager] recoverStatesOfPods(): unimplement")
+}
+
 func NewClusterManager() *ClusterManager {
-	ret := &ClusterManager{Namespace: "tiflash-autoscale", CloneSetName: "readnode", AutoScaleMeta: NewAutoScaleMeta()}
+	ret := &ClusterManager{
+		Namespace:     "tiflash-autoscale",
+		CloneSetName:  "readnode",
+		AutoScaleMeta: NewAutoScaleMeta(),
+		tsContainer:   NewTimeSeriesContainer(4)}
 	ret.initK8sClient()
+	ret.recoverStatesOfPods()
 	return ret
 }
 

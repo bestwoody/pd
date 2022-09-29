@@ -2,6 +2,7 @@ package autoscale
 
 import (
 	"container/list"
+	"sync"
 	"time"
 )
 
@@ -56,6 +57,29 @@ type SimpleTimeSeries struct {
 	// cap    int
 }
 
+func (c *SimpleTimeSeries) Reset() {
+	for c.series.Len() > 0 {
+		c.series.Remove(c.series.Front())
+	}
+	for _, v := range c.Statistics {
+		v.Reset()
+	}
+	c.max_time = 0
+}
+
+func (c *SimpleTimeSeries) Cpu() *AvgSigma {
+	return &c.Statistics[0]
+}
+
+func (c *SimpleTimeSeries) Mem() *AvgSigma {
+	return &c.Statistics[1]
+}
+
+func (cur *AvgSigma) Reset() {
+	cur.cnt = 0
+	cur.sum = 0
+}
+
 func (cur *AvgSigma) Sub(v float64) {
 	cur.cnt--
 	cur.sum -= v
@@ -92,6 +116,9 @@ func Add(cur []AvgSigma, values []float64) {
 }
 
 func Merge(cur []AvgSigma, o []AvgSigma) {
+	if o == nil {
+		return
+	}
 	for i, value := range o {
 		cur[i].Merge(&value)
 	}
@@ -105,15 +132,62 @@ func Avg(cur []AvgSigma) []float64 {
 	return ret
 }
 
+type StatsOfTimeSeries struct {
+	AvgOfCpu       float64
+	AvgOfMem       float64
+	SampleCntOfCpu int64
+	SampleCntOfMem int64
+	MinTime        int64
+	MaxTime        int64
+}
+
 type TimeSeriesContainer struct {
-	SeriesMap          map[string]*SimpleTimeSeries
+	seriesMap          map[string]*SimpleTimeSeries
 	cap_of_each_series int
+	mu                 sync.Mutex
 }
 
 func NewTimeSeriesContainer(cap_of_each_series int) *TimeSeriesContainer {
 	return &TimeSeriesContainer{
-		SeriesMap:          make(map[string]*SimpleTimeSeries),
+		seriesMap:          make(map[string]*SimpleTimeSeries),
 		cap_of_each_series: cap_of_each_series}
+}
+
+func (c *TimeSeriesContainer) GetStatisticsOfPod(podname string) []AvgSigma {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.seriesMap[podname]
+	if !ok {
+		return nil
+	}
+	ret := make([]AvgSigma, CapacityOfStaticsAvgSigma)
+	Merge(ret, v.Statistics)
+	return ret
+}
+
+func (c *TimeSeriesContainer) GetSnapshotOfTimeSeries(podname string) *StatsOfTimeSeries {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.seriesMap[podname]
+	if !ok {
+		return nil
+	}
+	minTime, maxTime := v.GetMinMaxTime()
+
+	return &StatsOfTimeSeries{AvgOfCpu: v.Cpu().Avg(),
+		SampleCntOfCpu: v.Cpu().Cnt(),
+		AvgOfMem:       v.Mem().Avg(),
+		SampleCntOfMem: v.Mem().Cnt(),
+		MinTime:        minTime, MaxTime: maxTime}
+}
+
+func (c *TimeSeriesContainer) ResetMetricsOfPod(podname string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.seriesMap[podname]
+	if ok {
+		v.Reset()
+	}
 }
 
 func (cur *SimpleTimeSeries) GetMinMaxTime() (int64, int64) {
@@ -121,7 +195,7 @@ func (cur *SimpleTimeSeries) GetMinMaxTime() (int64, int64) {
 	return min_time, cur.max_time
 }
 
-func (cur *SimpleTimeSeries) Append(time int64, values []float64, cap int) {
+func (cur *SimpleTimeSeries) append(time int64, values []float64, cap int) {
 	cur.series.PushBack(
 		&TimeValues{
 			time:   time,
@@ -140,13 +214,15 @@ func (cur *SimpleTimeSeries) Append(time int64, values []float64, cap int) {
 }
 
 func (cur *TimeSeriesContainer) Insert(key string, time int64, values []float64) {
-	val, ok := cur.SeriesMap[key]
+	cur.mu.Lock()
+	defer cur.mu.Unlock()
+	val, ok := cur.seriesMap[key]
 	if !ok {
 		val = &SimpleTimeSeries{
 			series:     list.New(),
-			Statistics: make([]AvgSigma, 6),
+			Statistics: make([]AvgSigma, CapacityOfStaticsAvgSigma),
 		}
-		cur.SeriesMap[key] = val
+		cur.seriesMap[key] = val
 	}
-	val.Append(time, values, cur.cap_of_each_series)
+	val.append(time, values, cur.cap_of_each_series)
 }

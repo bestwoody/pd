@@ -3,29 +3,105 @@ package autoscale
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
+)
+
+const (
+	PodStateUnassigned = 0
+	PodStateAssigned   = 1
+	TenantStateResume  = 0
+	TenantStatePause   = 0
 )
 
 type PodDesc struct {
 	TenantName string
 	Name       string
 	IP         string
+	State      int32 // 0: unassigned 1:assigned
+	mu         sync.Mutex
 	// pod        *v1.Pod
 }
 
+func GenMockConf() string {
+	return `tmp_path = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/tmp"
+	display_name = "TiFlash"
+	default_profile = "default"
+	users_config = "users.toml"
+	path = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/db"
+	capacity = "10737418240"
+	mark_cache_size = 5368709120
+	listen_host = "127.0.0.1"
+	tcp_port = 5000
+	http_port = 4500
+	interserver_http_port = 5500
+	
+	[flash]
+	tidb_status_addr = "127.0.0.1:8500"
+	service_addr = "127.0.0.1:9500"
+	
+	[flash.flash_cluster]
+	master_ttl = 60
+	refresh_interval = 20
+	update_rule_interval = 5
+	cluster_manager_path = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/flash_cluster_manager"
+	
+	[flash.proxy]
+	addr = "0.0.0.0:9000"
+	advertise-addr = "127.0.0.1:9000"
+	status-addr = "0.0.0.0:17000"
+	advertise-status-addr = "127.0.0.1:17000"
+	data-dir = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/db/proxy"
+	config = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/conf/proxy.toml"
+	log-file = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/log/proxy.log"
+	log-level = "info"
+	
+	[logger]
+	level = "debug"
+	log = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/log/server.log"
+	errorlog = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/log/error.log"
+	
+	[application]
+	runAsDaemon = true
+	
+	[profiles]
+	[profiles.default]
+	max_memory_usage = 0
+	max_threads = 20
+	
+	[raft]
+	kvstore_path = "/Users/woody/Desktop/tiflash/integrated/nodes/3508/tiflash/kvstore"
+	pd_addr = "127.0.0.1:6500"
+	ignore_databases = "system,default"
+	storage_engine="dt"
+	
+	[status]
+	metrics_port = "127.0.0.1:17500"`
+}
+
+// TODO implement
 func (c *PodDesc) AssignTenantWithMockConf(tenant string) bool {
-	return false
-	// TODO implement
+	// simulate work for a while
+	time.Sleep(time.Duration(1) * time.Second)
+
+	return c.switchState(PodStateUnassigned, PodStateAssigned)
+}
+
+func (c *PodDesc) switchState(from int32, to int32) bool {
+	return atomic.CompareAndSwapInt32(&c.State, from, to)
 }
 
 func (c *PodDesc) HandleAssignError() {
 	// TODO implements
 }
 
+// TODO implement
 func (c *PodDesc) UnassignTenantWithMockConf(tenant string) bool {
-	return false
-	// TODO implement
+	// simulate work for a while
+	time.Sleep(time.Duration(1) * time.Second)
+	return c.switchState(PodStateAssigned, PodStateUnassigned)
 }
 
 func (c *PodDesc) HandleUnassignError() {
@@ -36,16 +112,34 @@ type TenantDesc struct {
 	MinCntOfPod int
 	MaxCntOfPod int
 	Pods        map[string]*PodDesc
-	mu          sync.Mutex
+	State       int32
+	// mu          sync.Mutex
+}
+
+func (c *TenantDesc) switchState(from int32, to int32) bool {
+	return atomic.CompareAndSwapInt32(&c.State, from, to)
+}
+
+func (c *TenantDesc) Pause() bool {
+	return c.switchState(TenantStateResume, TenantStatePause)
+}
+
+func (c *TenantDesc) Resume() bool {
+	return c.switchState(TenantStatePause, TenantStateResume)
+}
+
+func (c *TenantDesc) GetState() int32 {
+	return atomic.LoadInt32(&c.State)
 }
 
 const (
-	DefaultMinCntOfPod    = 1
-	DefaultMaxCntOfPod    = 4
-	DefaultCoreOfPod      = 8
-	DefaultLowerLimit     = 0.2
-	DefaultHigherLimit    = 0.8
-	DefaultPrewarmPoolCap = 5
+	DefaultMinCntOfPod        = 1
+	DefaultMaxCntOfPod        = 4
+	DefaultCoreOfPod          = 8
+	DefaultLowerLimit         = 0.2
+	DefaultHigherLimit        = 0.8
+	DefaultPrewarmPoolCap     = 5
+	CapacityOfStaticsAvgSigma = 6
 )
 
 func NewTenantDescDefault() *TenantDesc {
@@ -80,6 +174,28 @@ func NewAutoScaleMeta() *AutoScaleMeta {
 		PodDescMap:  make(map[string]*PodDesc),
 		PrewarmPods: NewTenantDesc(0, DefaultPrewarmPoolCap),
 	}
+}
+
+// TODO remove all pod from tenant and update states
+func (c *AutoScaleMeta) Pause(tenant string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.TenantMap[tenant]
+	if !ok {
+		return false
+	}
+	return v.Pause()
+}
+
+// TODO add [min-cnt] pod into tenant and update states
+func (c *AutoScaleMeta) Resume(tenant string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.TenantMap[tenant]
+	if !ok {
+		return false
+	}
+	return v.Resume()
 }
 
 func (cur *AutoScaleMeta) CreateOrGetPodDesc(podName string, createOrGet bool) *PodDesc {
@@ -161,37 +277,39 @@ func SendGrpcReq() {
 
 }
 
-func (c *AutoScaleMeta) getTenantLock(tenant string) *sync.Mutex {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	v, ok := c.TenantMap[tenant]
-	if !ok {
-		return nil
-	} else {
-		return &v.mu
-	}
-}
+// func (c *AutoScaleMeta) getTenantLock(tenant string) *sync.Mutex {
+// 	c.mu.Lock()
+// 	defer c.mu.Unlock()
+// 	v, ok := c.TenantMap[tenant]
+// 	if !ok {
+// 		return nil
+// 	} else {
+// 		return &v.mu
+// 	}
+// }
 
 //TODO add pod level lock!!!
 
 // return cnt fail to add
 // -1 is error
-func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string) int {
+func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer *TimeSeriesContainer) int {
 	cnt := addCnt
 	podsToAssign := make([]*PodDesc, 0, addCnt)
-	tMu := c.getTenantLock(tenant)
-	if tMu == nil {
-		return -1
-	}
-	tMu.Lock()
-	defer tMu.Unlock()
+	// tMu := c.getTenantLock(tenant)
+	// if tMu == nil {
+	// 	return -1
+	// }
+	// tMu.Lock()
+	// defer tMu.Unlock()
+	c.mu.Lock()
 	// check if tenant is valid again to prevent it has been removed
 	_, ok := c.TenantMap[tenant]
 	if !ok {
+		c.mu.Unlock()
+		// tMu.Unlock()
 		return -1
 	}
 
-	c.mu.Lock()
 	for k, v := range c.PrewarmPods.Pods {
 		if cnt > 0 {
 			podsToAssign = append(podsToAssign, v)
@@ -204,11 +322,15 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string) int {
 		}
 	}
 	c.mu.Unlock()
+	// tMu.Unlock()
 	for _, v := range podsToAssign {
 		// TODO async call grpc assign api
 		// TODO go func() & wg.wait()
 		if !v.AssignTenantWithMockConf(tenant) {
 			v.HandleAssignError()
+		} else {
+			// clear dirty metrics
+			tsContainer.ResetMetricsOfPod(v.Name)
 		}
 	}
 	return cnt
@@ -217,19 +339,20 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string) int {
 func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 	cnt := removeCnt
 	podsToUnassign := make([]*PodDesc, 0, removeCnt)
-	tMu := c.getTenantLock(tenant)
-	if tMu == nil {
-		return -1
-	}
-	tMu.Lock()
-	defer tMu.Unlock()
+	// tMu := c.getTenantLock(tenant)
+	// if tMu == nil {
+	// 	return -1
+	// }
+	// tMu.Lock()
+	// defer tMu.Unlock()
+	c.mu.Lock()
 	// check if tenant is valid again to prevent it has been removed
 	tenantDesc, ok := c.TenantMap[tenant]
 	if !ok {
+		c.mu.Unlock()
 		return -1
 	}
 
-	c.mu.Lock()
 	for k, v := range tenantDesc.Pods {
 		if cnt > 0 {
 			podsToUnassign = append(podsToUnassign, v)
@@ -279,7 +402,7 @@ func (c *AutoScaleMeta) HandleK8sDelPodEvent(pod *v1.Pod) bool {
 }
 
 // for test
-func (c *AutoScaleMeta) AddPod(podName string) bool {
+func (c *AutoScaleMeta) AddPod4Test(podName string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_, ok := c.PodDescMap[podName]
@@ -296,7 +419,9 @@ func (c *AutoScaleMeta) AddPod(podName string) bool {
 	return true
 }
 
-func (c *AutoScaleMeta) SetupTenantWithDefaultArgs(tenant string) bool {
+func (c *AutoScaleMeta) SetupTenantWithDefaultArgs4Test(tenant string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	_, ok := c.TenantMap[tenant]
 	if !ok {
 		c.TenantMap[tenant] = NewTenantDescDefault()
@@ -307,6 +432,8 @@ func (c *AutoScaleMeta) SetupTenantWithDefaultArgs(tenant string) bool {
 }
 
 func (c *AutoScaleMeta) SetupTenant(tenant string, minPods int, maxPods int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	_, ok := c.TenantMap[tenant]
 	if !ok {
 		c.TenantMap[tenant] = NewTenantDesc(minPods, maxPods)
@@ -316,7 +443,7 @@ func (c *AutoScaleMeta) SetupTenant(tenant string, minPods int, maxPods int) boo
 	}
 }
 
-func (c *AutoScaleMeta) UpdateTenant(podName string, newTenant string) bool {
+func (c *AutoScaleMeta) UpdateTenant4Test(podName string, newTenant string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	podDesc, ok := c.PodDescMap[podName]
@@ -350,14 +477,20 @@ func (c *AutoScaleMeta) UpdateTenant(podName string, newTenant string) bool {
 
 func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSeriesContainer) []AvgSigma {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+
 	tenantDesc, ok := c.TenantMap[tenantName]
 	if !ok {
+		c.mu.Unlock()
 		return nil
 	} else {
-		ret := make([]AvgSigma, 6)
-		for podName := range tenantDesc.Pods {
-			Merge(ret, tsc.SeriesMap[podName].Statistics)
+		podsOfTenant := make([]string, 0, len(tenantDesc.Pods))
+		for podname := range tenantDesc.Pods {
+			podsOfTenant = append(podsOfTenant, podname)
+		}
+		c.mu.Unlock()
+		ret := make([]AvgSigma, CapacityOfStaticsAvgSigma)
+		for _, podName := range podsOfTenant {
+			Merge(ret, tsc.GetStatisticsOfPod(podName))
 		}
 		return ret
 	}
