@@ -172,7 +172,7 @@ func (c *TimeSeriesContainer) GetSnapshotOfTimeSeries(podname string) *StatsOfTi
 	if !ok {
 		return nil
 	}
-	minTime, maxTime := v.GetMinMaxTime()
+	minTime, maxTime := v.getMinMaxTime()
 
 	return &StatsOfTimeSeries{AvgOfCpu: v.Cpu().Avg(),
 		SampleCntOfCpu: v.Cpu().Cnt(),
@@ -190,7 +190,7 @@ func (c *TimeSeriesContainer) ResetMetricsOfPod(podname string) {
 	}
 }
 
-func (cur *SimpleTimeSeries) GetMinMaxTime() (int64, int64) {
+func (cur *SimpleTimeSeries) getMinMaxTime() (int64, int64) {
 	min_time := cur.series.Front().Value.(*TimeValues).time
 	return min_time, cur.max_time
 }

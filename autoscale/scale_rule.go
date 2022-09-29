@@ -12,7 +12,7 @@ func ComputeBestPodsInRuleOfPM(tenantDesc *TenantDesc, cpuusage float64, coreOfP
 		return -1, 0
 	} else {
 		mu.Lock()
-		oldCntOfPods := len(tenantDesc.Pods)
+		oldCntOfPods := len(tenantDesc.pods)
 		minCntOfPods := tenantDesc.MinCntOfPod
 		maxCntOfPods := tenantDesc.MaxCntOfPod
 		mu.Unlock()

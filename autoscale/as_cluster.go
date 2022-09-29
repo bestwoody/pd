@@ -144,6 +144,12 @@ func (c *ClusterManager) collectMetrics() {
 
 }
 
+func (c *ClusterManager) analyzeMetrics() {
+	// TODO implement
+	tenants := c.AutoScaleMeta.GetTenants()
+	ComputeBestPodsInRuleOfPM()
+}
+
 func Int32Ptr(val int32) *int32 {
 	ret := new(int32)
 	*ret = int32(val)
@@ -156,6 +162,14 @@ func (c *ClusterManager) Shutdown() {
 	c.watcher.Stop()
 	c.watchMu.Unlock()
 	c.wg.Wait()
+}
+
+func (c *ClusterManager) Pause(tenant string) bool {
+	return c.AutoScaleMeta.Pause(tenant)
+}
+
+func (c *ClusterManager) Resume(tenant string) bool {
+	return c.AutoScaleMeta.Resume(tenant, c.tsContainer)
 }
 
 func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
