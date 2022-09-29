@@ -129,12 +129,12 @@ func (c *ClusterManager) collectMetrics() {
 			hasNew = false
 			tArr := []string{"t1", "t2"}
 			for _, tName := range tArr {
-				stats1 := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
+				stats := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
 				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
-					stats1[0].Avg(),
-					stats1[0].Cnt(),
-					stats1[1].Avg(),
-					stats1[1].Cnt(),
+					stats[0].Avg(),
+					stats[0].Cnt(),
+					stats[1].Avg(),
+					stats[1].Cnt(),
 				)
 			}
 		}
@@ -146,8 +146,21 @@ func (c *ClusterManager) collectMetrics() {
 
 func (c *ClusterManager) analyzeMetrics() {
 	// TODO implement
+
+	// c.tsContainer.GetSnapshotOfTimeSeries()
+
 	tenants := c.AutoScaleMeta.GetTenants()
-	ComputeBestPodsInRuleOfPM()
+	for _, tenant := range tenants {
+		if tenant.GetState() == TenantStatePause {
+			continue
+		}
+		stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
+		bestPods, _ := ComputeBestPodsInRuleOfPM(tenant, stats[0].Avg(), tenant.GetCntOfPods(), DefaultCoreOfPod)
+		c.AutoScaleMeta.ResizePodsOfTenant(bestPods, tenant.Name, c.tsContainer)
+		// tenant.addPodIntoTenant()
+
+	}
+
 }
 
 func Int32Ptr(val int32) *int32 {

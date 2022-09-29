@@ -1,8 +1,6 @@
 package autoscale
 
-import "sync"
-
-func ComputeBestPodsInRuleOfPM(tenantDesc *TenantDesc, cpuusage float64, coreOfPod int, mu *sync.Mutex) (int, int /*delta*/) {
+func ComputeBestPodsInRuleOfPM(tenantDesc *TenantDesc, cpuusage float64, coreOfPod int) (int, int /*delta*/) {
 	if tenantDesc == nil {
 		return -1, 0
 	}
@@ -11,11 +9,11 @@ func ComputeBestPodsInRuleOfPM(tenantDesc *TenantDesc, cpuusage float64, coreOfP
 	if cpuusage >= lowLimit && cpuusage <= upLimit {
 		return -1, 0
 	} else {
-		mu.Lock()
-		oldCntOfPods := len(tenantDesc.pods)
+		// mu.Lock()
+		oldCntOfPods := tenantDesc.GetCntOfPods()
 		minCntOfPods := tenantDesc.MinCntOfPod
 		maxCntOfPods := tenantDesc.MaxCntOfPod
-		mu.Unlock()
+		// mu.Unlock()
 		if cpuusage > upLimit {
 			ret := MinInt(oldCntOfPods+1, maxCntOfPods)
 			return ret, ret - oldCntOfPods

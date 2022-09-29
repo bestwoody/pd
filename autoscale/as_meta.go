@@ -109,6 +109,7 @@ func (c *PodDesc) HandleUnassignError() {
 }
 
 type TenantDesc struct {
+	Name        string
 	MinCntOfPod int
 	MaxCntOfPod int
 	pods        map[string]*PodDesc
@@ -183,16 +184,18 @@ const (
 	CapacityOfStaticsAvgSigma = 6
 )
 
-func NewTenantDescDefault() *TenantDesc {
+func NewTenantDescDefault(name string) *TenantDesc {
 	return &TenantDesc{
+		Name:        name,
 		MinCntOfPod: DefaultMinCntOfPod,
 		MaxCntOfPod: DefaultMaxCntOfPod,
 		pods:        make(map[string]*PodDesc),
 	}
 }
 
-func NewTenantDesc(minPods int, maxPods int) *TenantDesc {
+func NewTenantDesc(name string, minPods int, maxPods int) *TenantDesc {
 	return &TenantDesc{
+		Name:        name,
 		MinCntOfPod: minPods,
 		MaxCntOfPod: maxPods,
 		pods:        make(map[string]*PodDesc),
@@ -213,16 +216,16 @@ func NewAutoScaleMeta() *AutoScaleMeta {
 		// Pod2tenant: make(map[string]string),
 		tenantMap:   make(map[string]*TenantDesc),
 		PodDescMap:  make(map[string]*PodDesc),
-		PrewarmPods: NewTenantDesc(0, DefaultPrewarmPoolCap),
+		PrewarmPods: NewTenantDesc("$prewarm", 0, DefaultPrewarmPoolCap),
 	}
 }
 
-func (c *AutoScaleMeta) GetTenants() []string {
+func (c *AutoScaleMeta) GetTenants() []*TenantDesc {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ret := make([]string, 0, len(c.tenantMap))
-	for k := range c.tenantMap {
-		ret = append(ret, k)
+	ret := make([]*TenantDesc, 0, len(c.tenantMap))
+	for _, v := range c.tenantMap {
+		ret = append(ret, v)
 	}
 	return ret
 }
@@ -252,6 +255,7 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 		return false
 	}
 	if v.Resume() {
+		// TODO ensure there is no pods now
 		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer)
 		return true
 	} else {
@@ -340,16 +344,17 @@ func SendGrpcReq() {
 
 }
 
-// func (c *AutoScaleMeta) getTenantLock(tenant string) *sync.Mutex {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-// 	v, ok := c.TenantMap[tenant]
-// 	if !ok {
-// 		return nil
-// 	} else {
-// 		return &v.mu
-// 	}
-// }
+// TODO refine lock logic to prevent race
+func (c *AutoScaleMeta) ResizePodsOfTenant(target int, tenant string, tsContainer *TimeSeriesContainer) {
+	c.mu.Lock()
+	from := c.tenantMap[tenant].GetCntOfPods()
+	c.mu.Unlock()
+	if target > from {
+		c.addPodIntoTenant(target-from, tenant, tsContainer)
+	} else if target < from {
+		c.removePodFromTenant(from-target, tenant)
+	}
+}
 
 //TODO add pod level lock!!!
 
@@ -506,7 +511,7 @@ func (c *AutoScaleMeta) SetupTenantWithDefaultArgs4Test(tenant string) bool {
 	defer c.mu.Unlock()
 	_, ok := c.tenantMap[tenant]
 	if !ok {
-		c.tenantMap[tenant] = NewTenantDescDefault()
+		c.tenantMap[tenant] = NewTenantDescDefault(tenant)
 		return true
 	} else {
 		return false
@@ -518,7 +523,7 @@ func (c *AutoScaleMeta) SetupTenant(tenant string, minPods int, maxPods int) boo
 	defer c.mu.Unlock()
 	_, ok := c.tenantMap[tenant]
 	if !ok {
-		c.tenantMap[tenant] = NewTenantDesc(minPods, maxPods)
+		c.tenantMap[tenant] = NewTenantDesc(tenant, minPods, maxPods)
 		return true
 	} else {
 		return false
