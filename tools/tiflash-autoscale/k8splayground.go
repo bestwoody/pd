@@ -246,7 +246,7 @@ func main() {
 	// OpenkruiseTest()
 	// main2()
 	cm := autoscale.NewClusterManager()
-
+	cm.AutoScaleMeta.SetupTenant("t1", 1, 4)
 	time.Sleep(60 * time.Second)
 	cm.Shutdown()
 }

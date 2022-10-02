@@ -12,16 +12,17 @@ import (
 const (
 	PodStateUnassigned = 0
 	PodStateAssigned   = 1
+	PodStateInit       = 2
 	TenantStateResume  = 0
-	TenantStatePause   = 0
+	TenantStatePause   = 1
 )
 
 type PodDesc struct {
 	TenantName string
 	Name       string
 	IP         string
-	State      int32 // 0: unassigned 1:assigned
-	mu         sync.Mutex
+	State      int32      // 0: unassigned 1:assigned
+	mu         sync.Mutex // TODO use it
 	// pod        *v1.Pod
 }
 
@@ -220,12 +221,30 @@ func NewAutoScaleMeta() *AutoScaleMeta {
 	}
 }
 
+func (c *AutoScaleMeta) RecoverStatesOfPods4Test() {
+	// c.mu.Lock()
+	// defer c.mu.Unlock()
+	// for podname, poddesc := range c.PodDescMap {
+	// 	poddesc.switchState()
+	// }
+}
+
 func (c *AutoScaleMeta) GetTenants() []*TenantDesc {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ret := make([]*TenantDesc, 0, len(c.tenantMap))
 	for _, v := range c.tenantMap {
 		ret = append(ret, v)
+	}
+	return ret
+}
+
+func (c *AutoScaleMeta) GetTenantNames() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ret := make([]string, 0, len(c.tenantMap))
+	for _, v := range c.tenantMap {
+		ret = append(ret, v.Name)
 	}
 	return ret
 }
@@ -306,7 +325,17 @@ func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
 	fmt.Printf("[updatePod] %v %v\n", name, pod.Status)
 	if !ok {
 		c.pendingCnt++ // inc pending cnt
-		c.PodDescMap[name] = &PodDesc{Name: name, IP: pod.Status.PodIP}
+		state := PodStateInit
+		if pod.Status.PodIP != "" {
+			state = PodStateUnassigned // TODO use api/etcd to get read state(assign or unassign, which tenant ...) in future
+		}
+		podDesc = &PodDesc{Name: name, IP: pod.Status.PodIP, State: int32(state)}
+		c.PodDescMap[name] = podDesc
+		if state == PodStateUnassigned {
+			c.addPreWarmFromPending(name, podDesc)
+		} else if state == PodStateAssigned {
+			// TODO implement , setup meta for tenant's pod
+		}
 		fmt.Printf("new Pod %v: %v\n", name, pod.Status.PodIP)
 	} else {
 		if podDesc.Name == "" {

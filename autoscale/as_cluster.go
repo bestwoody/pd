@@ -66,7 +66,7 @@ type ClusterManager struct {
 // TODO expire of removed Pod in tsContainer,lstTsMap
 
 func (c *ClusterManager) collectMetrics() {
-
+	defer c.wg.Done()
 	// tsContainer := NewTimeSeriesContainer(4)
 	// mclientset, err := metricsv.NewForConfig(config)
 	// as_meta := autoscale.NewAutoScaleMeta()
@@ -127,7 +127,8 @@ func (c *ClusterManager) collectMetrics() {
 		// just print tenant's avg metrics
 		if hasNew {
 			hasNew = false
-			tArr := []string{"t1", "t2"}
+			tArr := c.AutoScaleMeta.GetTenantNames()
+			// tArr := []string{"t1", "t2"}
 			for _, tName := range tArr {
 				stats := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
 				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
@@ -148,17 +149,27 @@ func (c *ClusterManager) analyzeMetrics() {
 	// TODO implement
 
 	// c.tsContainer.GetSnapshotOfTimeSeries()
-
-	tenants := c.AutoScaleMeta.GetTenants()
-	for _, tenant := range tenants {
-		if tenant.GetState() == TenantStatePause {
-			continue
+	defer c.wg.Done()
+	for {
+		if atomic.LoadInt32(&c.shutdown) != 0 {
+			return
 		}
-		stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
-		bestPods, _ := ComputeBestPodsInRuleOfPM(tenant, stats[0].Avg(), tenant.GetCntOfPods(), DefaultCoreOfPod)
-		c.AutoScaleMeta.ResizePodsOfTenant(bestPods, tenant.Name, c.tsContainer)
-		// tenant.addPodIntoTenant()
-
+		tenants := c.AutoScaleMeta.GetTenants()
+		for _, tenant := range tenants {
+			if tenant.GetState() == TenantStatePause {
+				continue
+			}
+			if tenant.GetCntOfPods() == 0 {
+				c.AutoScaleMeta.ResizePodsOfTenant(tenant.MinCntOfPod, tenant.Name, c.tsContainer)
+			} else {
+				stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
+				bestPods, _ := ComputeBestPodsInRuleOfPM(tenant, stats[0].Avg(), DefaultCoreOfPod)
+				if bestPods != -1 {
+					c.AutoScaleMeta.ResizePodsOfTenant(bestPods, tenant.Name, c.tsContainer)
+				}
+			}
+			// tenant.addPodIntoTenant()
+		}
 	}
 
 }
@@ -252,6 +263,10 @@ func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
 			// }
 		}
 	}
+
+}
+
+func (c *ClusterManager) scanStateOfPods() {
 
 }
 
@@ -375,6 +390,7 @@ func (c *ClusterManager) initK8sClient() {
 		panic(err.Error())
 	}
 	resVer := c.loadPods()
+	// c.scanStateOfPods()
 	c.wg.Add(1)
 	go c.watchPodsLoop(resVer)
 	// labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
@@ -421,16 +437,25 @@ func (c *ClusterManager) initK8sClient() {
 // TODO must implement!!! necessary
 func (c *ClusterManager) recoverStatesOfPods() {
 	fmt.Println("[ClusterManager] recoverStatesOfPods(): unimplement")
+	// c.AutoScaleMeta.recoverStatesOfPods()
 }
+
+// podstat:   init->prewarmed<--->ComputePod
 
 func NewClusterManager() *ClusterManager {
 	ret := &ClusterManager{
 		Namespace:     "tiflash-autoscale",
 		CloneSetName:  "readnode",
 		AutoScaleMeta: NewAutoScaleMeta(),
-		tsContainer:   NewTimeSeriesContainer(4)}
+		tsContainer:   NewTimeSeriesContainer(4),
+		lstTsMap:      make(map[string]int64),
+	}
 	ret.initK8sClient()
-	ret.recoverStatesOfPods()
+	// ret.scanStateOfPods()
+	ret.recoverStatesOfPods() // TODO implemant
+	ret.wg.Add(2)
+	go ret.collectMetrics()
+	go ret.analyzeMetrics()
 	return ret
 }
 
