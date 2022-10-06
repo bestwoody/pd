@@ -1,20 +1,30 @@
 package autoscale
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	restclient "k8s.io/client-go/rest"
 )
 
 const (
-	PodStateUnassigned = 0
-	PodStateAssigned   = 1
-	PodStateInit       = 2
-	TenantStateResume  = 0
-	TenantStatePause   = 1
+	PodStateUnassigned      = 0
+	PodStateAssigned        = 1
+	PodStateInit            = 2
+	TenantStateResume       = 0
+	TenantStatePause        = 1
+	CmRnPodStateUnassigned  = 0
+	CmRnPodStateUnassigning = 1
+	CmRnPodStateAssigning   = 2
+	CmRnPodStateAssigned    = 3
+	CmRnPodStateUnknown     = -1
 )
 
 type PodDesc struct {
@@ -210,14 +220,57 @@ type AutoScaleMeta struct {
 	PodDescMap  map[string]*PodDesc
 	PrewarmPods *TenantDesc
 	pendingCnt  int32 // atomic
+
+	k8sCli    *kubernetes.Clientset
+	configMap *v1.ConfigMap //TODO expire entry  of removed pod
+	cmMutex   sync.Mutex
 }
 
-func NewAutoScaleMeta() *AutoScaleMeta {
-	return &AutoScaleMeta{
+func NewAutoScaleMeta(config *restclient.Config) *AutoScaleMeta {
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+	ret := &AutoScaleMeta{
 		// Pod2tenant: make(map[string]string),
 		tenantMap:   make(map[string]*TenantDesc),
 		PodDescMap:  make(map[string]*PodDesc),
 		PrewarmPods: NewTenantDesc("$prewarm", 0, DefaultPrewarmPoolCap),
+		k8sCli:      client,
+	}
+	ret.loadTenants()
+	ret.initConfigMap()
+	return ret
+}
+
+func (c *AutoScaleMeta) loadTenants() {
+	c.SetupTenant("t1", 1, 4)
+	//TODO load tenants from config of control panel
+}
+
+func (c *AutoScaleMeta) initConfigMap() {
+	configMapName := "readnode-pod-state"
+	var err error
+	c.configMap, err = c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Get(context.TODO(), configMapName, metav1.GetOptions{})
+	if err != nil {
+		// panic(err.Error())
+		c.configMap = &v1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ConfigMap",
+				APIVersion: "v1",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: configMapName,
+			},
+			Data: map[string]string{},
+		}
+		// for {
+		// get pods in all the namespaces by omitting namespace
+		// Or specify namespace to get pods in particular namespace
+		c.configMap, err = c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Create(context.TODO(), c.configMap, metav1.CreateOptions{})
+		if err != nil {
+			panic(err.Error())
+		}
 	}
 }
 
@@ -306,15 +359,117 @@ func (c *AutoScaleMeta) AddPodDetail(podName string, pod *v1.Pod) {
 	// TODO implements
 }
 
+func ConfigMapPodStateStr(state int, optTenant string) string {
+	var value string
+	switch state {
+	case CmRnPodStateUnassigned:
+		value = "unassigned"
+	case CmRnPodStateUnassigning:
+		value = "unassigning"
+	case CmRnPodStateAssigned:
+		value = "assigned|" + optTenant
+	case CmRnPodStateAssigning:
+		value = "assigning"
+	}
+	return value
+}
+
+func ConfigMapPodState(str string) (int, string) {
+	switch str {
+	case "unassigned":
+		return CmRnPodStateUnassigned, ""
+	case "unassigning":
+		return CmRnPodStateUnassigning, ""
+	case "assigning":
+		return CmRnPodStateAssigning, ""
+	default:
+		if !strings.HasPrefix(str, "assigned|") {
+			return -1, ""
+		}
+		i := strings.Index(str, "|")
+		tenant := ""
+		if i > -1 {
+			tenant = str[i+1:]
+		}
+		return CmRnPodStateAssigned, tenant
+	}
+
+}
+
+// TODO mutex protect by COnfigMapMutex
+//
+//	func (c *AutoScaleMeta) configMapStateWarming(podName string) {
+//		c.configMap.Data[podName] = "unassigned"
+//	}
+func (c *AutoScaleMeta) setConfigMapState(podName string, state int, optTenant string) error {
+	c.cmMutex.Lock()
+	defer c.cmMutex.Unlock()
+	var value string
+	switch state {
+	case CmRnPodStateUnassigned:
+		value = "unassigned"
+	case CmRnPodStateUnassigning:
+		value = "unassigning"
+	case CmRnPodStateAssigned:
+		value = "assigned|" + optTenant
+	case CmRnPodStateAssigning:
+		value = "assigning"
+	}
+	// TODO  c.configMap.DeepCopy()
+	// TODO err handlling
+	if c.configMap.Data == nil {
+		c.configMap.Data = make(map[string]string)
+	}
+	c.configMap.Data[podName] = value
+	retConfigMap, err := c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), c.configMap, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	c.configMap = retConfigMap
+	return nil
+}
+
+func (c *AutoScaleMeta) setConfigMapStateBatch(kvMap map[string]string) error {
+	c.cmMutex.Lock()
+	defer c.cmMutex.Unlock()
+	// TODO  c.configMap.DeepCopy()
+	// TODO err handlling
+	if c.configMap.Data == nil {
+		c.configMap.Data = make(map[string]string)
+	}
+	for k, v := range kvMap {
+		c.configMap.Data[k] = v
+	}
+
+	retConfigMap, err := c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), c.configMap, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	c.configMap = retConfigMap
+	return nil
+}
+
 func (c *AutoScaleMeta) addPreWarmFromPending(podName string, desc *PodDesc) {
 	c.pendingCnt-- // dec pending cnt
 
 	// c.PrewarmPods.pods[podName] = desc
 	c.PrewarmPods.SetPod(podName, desc)
+	c.setConfigMapState(podName, CmRnPodStateUnassigned, "")
 }
 
 func (c *AutoScaleMeta) handleChangeOfPodIP(pod *v1.Pod) {
 
+}
+
+func (c *AutoScaleMeta) GetRnPodStateAndTenantFromCM(podname string) (int, string) {
+	c.cmMutex.Lock()
+	defer c.cmMutex.Unlock()
+	stateStr, ok := c.configMap.Data[podname]
+	if !ok {
+		return CmRnPodStateUnknown, ""
+	} else {
+		return ConfigMapPodState(stateStr)
+	}
 }
 
 func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
@@ -326,17 +481,26 @@ func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
 	if !ok {
 		c.pendingCnt++ // inc pending cnt
 		state := PodStateInit
+		tenantName := ""
+		cmRnPodState := CmRnPodStateUnknown
 		if pod.Status.PodIP != "" {
 			state = PodStateUnassigned // TODO use api/etcd to get read state(assign or unassign, which tenant ...) in future
+			cmRnPodState, tenantName = c.GetRnPodStateAndTenantFromCM(name)
+			// TODO handle ssigning case ,  merge podstate/CmRnPodState together
+			if cmRnPodState != CmRnPodStateUnknown && cmRnPodState == CmRnPodStateAssigned {
+				state = PodStateAssigned
+			}
 		}
 		podDesc = &PodDesc{Name: name, IP: pod.Status.PodIP, State: int32(state)}
 		c.PodDescMap[name] = podDesc
 		if state == PodStateUnassigned {
 			c.addPreWarmFromPending(name, podDesc)
+			fmt.Printf("addPreWarmFromPending %v: %v\n", name, pod.Status.PodIP)
 		} else if state == PodStateAssigned {
-			// TODO implement , setup meta for tenant's pod
+			c.updateLocalMetaPodOfTenant(name, podDesc, tenantName)
+			fmt.Printf("updateLocalMetaPodOfTenant %v: %v tenant: %v\n", name, pod.Status.PodIP, tenantName)
 		}
-		fmt.Printf("new Pod %v: %v\n", name, pod.Status.PodIP)
+
 	} else {
 		if podDesc.Name == "" {
 			//TODO handle
@@ -385,6 +549,17 @@ func (c *AutoScaleMeta) ResizePodsOfTenant(target int, tenant string, tsContaine
 	}
 }
 
+func (c *AutoScaleMeta) updateLocalMetaPodOfTenant(podName string, podDesc *PodDesc, tenant string) {
+	// c.mu.Lock()
+	// defer c.mu.Unlock()
+	tDesc, ok := c.tenantMap[tenant]
+	if ok {
+		tDesc.SetPod(podName, podDesc)
+	} else {
+		fmt.Printf("wild pod found! pod:%v , tenant: %v\n", podName, tenant)
+	}
+}
+
 //TODO add pod level lock!!!
 
 // return cnt fail to add
@@ -414,7 +589,7 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 			v := c.PrewarmPods.RemovePod(k, true)
 			if v != nil {
 				podsToAssign = append(podsToAssign, v)
-
+				// DO we need setPod after assigned successfully? since assign api may fail
 				c.tenantMap[tenant].SetPod(k, v)
 				// c.tenantMap[tenant].pods[k] = v
 
@@ -429,16 +604,19 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 	}
 	c.mu.Unlock()
 	// tMu.Unlock()
+	statesDeltaMap := make(map[string]string)
 	for _, v := range podsToAssign {
 		// TODO async call grpc assign api
 		// TODO go func() & wg.wait()
 		if !v.AssignTenantWithMockConf(tenant) {
 			v.HandleAssignError()
 		} else {
+			statesDeltaMap[v.Name] = ConfigMapPodStateStr(CmRnPodStateAssigned, tenant)
 			// clear dirty metrics
 			tsContainer.ResetMetricsOfPod(v.Name)
 		}
 	}
+	c.setConfigMapStateBatch(statesDeltaMap)
 	return cnt
 }
 
@@ -476,6 +654,7 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 		}
 	}
 	c.mu.Unlock()
+	statesDeltaMap := make(map[string]string)
 	for _, v := range podsToUnassign {
 		// TODO async call grpc unassign api
 		// TODO go func() & wg.wait()
@@ -483,13 +662,14 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 			v.HandleUnassignError()
 		} else {
 			c.mu.Lock()
-
+			statesDeltaMap[v.Name] = ConfigMapPodStateStr(CmRnPodStateUnassigned, "")
 			c.PrewarmPods.SetPod(v.Name, v)
 			// c.PrewarmPods.pods[v.Name] = v
 
 			c.mu.Unlock()
 		}
 	}
+	c.setConfigMapStateBatch(statesDeltaMap)
 	return cnt
 }
 

@@ -287,32 +287,32 @@ func (c *ClusterManager) loadPods() string {
 }
 
 // TODO load existed pods
-func (c *ClusterManager) initK8sClient() {
-	config, err := getK8sConfig()
-	if err != nil {
-		panic(err.Error())
-	}
-	c.MetricsCli, err = metricsv.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
-	c.K8sCli, err = kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
-	c.Cli = kruiseclientset.NewForConfigOrDie(config)
-	_, err = c.K8sCli.CoreV1().Namespaces().Get(context.TODO(), c.Namespace, metav1.GetOptions{})
-	if err != nil {
-		_, err = c.K8sCli.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: c.Namespace,
-				Labels: map[string]string{
-					"ns": c.Namespace,
-				}}}, metav1.CreateOptions{})
-		if err != nil {
-			panic(err.Error())
-		}
-	}
+func (c *ClusterManager) initK8sComponents() {
+	// config, err := getK8sConfig()
+	// if err != nil {
+	// 	panic(err.Error())
+	// }
+	// c.MetricsCli, err = metricsv.NewForConfig(config)
+	// if err != nil {
+	// 	panic(err.Error())
+	// }
+	// c.K8sCli, err = kubernetes.NewForConfig(config)
+	// if err != nil {
+	// 	panic(err.Error())
+	// }
+	// c.Cli = kruiseclientset.NewForConfigOrDie(config)
+	// _, err = c.K8sCli.CoreV1().Namespaces().Get(context.TODO(), c.Namespace, metav1.GetOptions{})
+	// if err != nil {
+	// 	_, err = c.K8sCli.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
+	// 		ObjectMeta: metav1.ObjectMeta{
+	// 			Name: c.Namespace,
+	// 			Labels: map[string]string{
+	// 				"ns": c.Namespace,
+	// 			}}}, metav1.CreateOptions{})
+	// 	if err != nil {
+	// 		panic(err.Error())
+	// 	}
+	// }
 	cloneSetList, err := c.Cli.AppsV1alpha1().CloneSets(c.Namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		panic(err.Error())
@@ -325,6 +325,7 @@ func (c *ClusterManager) initK8sClient() {
 			break
 		}
 	}
+	var retCloneset *v1alpha1.CloneSet
 	if !found {
 		volumeName := "tiflash-readnode-data-vol"
 		/// TODO ensure one pod one node and fixed nodegroup
@@ -381,13 +382,15 @@ func (c *ClusterManager) initK8sClient() {
 			},
 		}
 		fmt.Println("create clonneSet")
-		c.CloneSet, err = c.Cli.AppsV1alpha1().CloneSets(c.Namespace).Create(context.TODO(), &cloneSet, metav1.CreateOptions{})
+		retCloneset, err = c.Cli.AppsV1alpha1().CloneSets(c.Namespace).Create(context.TODO(), &cloneSet, metav1.CreateOptions{})
 	} else {
 		fmt.Println("get clonneSet")
-		c.CloneSet, err = c.Cli.AppsV1alpha1().CloneSets(c.Namespace).Get(context.TODO(), c.CloneSetName, metav1.GetOptions{})
+		retCloneset, err = c.Cli.AppsV1alpha1().CloneSets(c.Namespace).Get(context.TODO(), c.CloneSetName, metav1.GetOptions{})
 	}
 	if err != nil {
 		panic(err.Error())
+	} else {
+		c.CloneSet = retCloneset.DeepCopy()
 	}
 	resVer := c.loadPods()
 	// c.scanStateOfPods()
@@ -440,17 +443,52 @@ func (c *ClusterManager) recoverStatesOfPods() {
 	// c.AutoScaleMeta.recoverStatesOfPods()
 }
 
+func initK8sEnv(Namespace string) (config *restclient.Config, K8sCli *kubernetes.Clientset, MetricsCli *metricsv.Clientset, Cli *kruiseclientset.Clientset) {
+	config, err := getK8sConfig()
+	if err != nil {
+		panic(err.Error())
+	}
+	MetricsCli, err = metricsv.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+	K8sCli, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+	Cli = kruiseclientset.NewForConfigOrDie(config)
+	_, err = K8sCli.CoreV1().Namespaces().Get(context.TODO(), Namespace, metav1.GetOptions{})
+	if err != nil {
+		_, err = K8sCli.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: Namespace,
+				Labels: map[string]string{
+					"ns": Namespace,
+				}}}, metav1.CreateOptions{})
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+	return config, K8sCli, MetricsCli, Cli
+}
+
 // podstat:   init->prewarmed<--->ComputePod
 
 func NewClusterManager() *ClusterManager {
+	namespace := "tiflash-autoscale"
+	k8sConfig, K8sCli, MetricsCli, Cli := initK8sEnv(namespace)
 	ret := &ClusterManager{
-		Namespace:     "tiflash-autoscale",
+		Namespace:     namespace,
 		CloneSetName:  "readnode",
-		AutoScaleMeta: NewAutoScaleMeta(),
+		AutoScaleMeta: NewAutoScaleMeta(k8sConfig),
 		tsContainer:   NewTimeSeriesContainer(4),
 		lstTsMap:      make(map[string]int64),
+
+		K8sCli:     K8sCli,
+		MetricsCli: MetricsCli,
+		Cli:        Cli,
 	}
-	ret.initK8sClient()
+	ret.initK8sComponents()
 	// ret.scanStateOfPods()
 	ret.recoverStatesOfPods() // TODO implemant
 	ret.wg.Add(2)
@@ -460,7 +498,7 @@ func NewClusterManager() *ClusterManager {
 }
 
 // TODO mutex protection
-func AddNewPods(cli *kruiseclientset.Clientset, ns string, cloneSet *v1alpha1.CloneSet, from int, delta int) (*v1alpha1.CloneSet, error) {
+func AddNewPods(c *ClusterManager, cli *kruiseclientset.Clientset, ns string, cloneSet *v1alpha1.CloneSet, from int, delta int) (*v1alpha1.CloneSet, error) {
 	// TODO add mutex protection?
 	if delta <= 0 {
 		return cloneSet, fmt.Errorf("delta <= 0")
@@ -475,12 +513,13 @@ func AddNewPods(cli *kruiseclientset.Clientset, ns string, cloneSet *v1alpha1.Cl
 	if err != nil {
 		return cloneSet, fmt.Errorf(err.Error())
 	} else {
+		c.CloneSet = ret.DeepCopy()
 		return ret, nil
 	}
 }
 
 func (c *ClusterManager) AddNewPods(from int, delta int) (*v1alpha1.CloneSet, error) {
-	return AddNewPods(c.Cli, c.Namespace, c.CloneSet, from, delta)
+	return AddNewPods(c, c.Cli, c.Namespace, c.CloneSet, from, delta)
 }
 
 func (c *ClusterManager) Wait() {
