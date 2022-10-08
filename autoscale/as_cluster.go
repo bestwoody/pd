@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/openkruise/kruise-api/apps/v1alpha1"
 	kruiseclientset "github.com/openkruise/kruise-api/client/clientset/versioned"
@@ -67,37 +69,27 @@ type ClusterManager struct {
 
 func (c *ClusterManager) collectMetrics() {
 	defer c.wg.Done()
-	// tsContainer := NewTimeSeriesContainer(4)
-	// mclientset, err := metricsv.NewForConfig(config)
-	// as_meta := autoscale.NewAutoScaleMeta()
 	as_meta := c.AutoScaleMeta
-	// as_meta.AddPod4Test("web-0")
-	// as_meta.AddPod4Test("web-1")
-	// as_meta.AddPod4Test("web-2")
-	// as_meta.AddPod4Test("hello-node-7c7c59b7cb-6bsjg")
-	// as_meta.SetupTenantWithDefaultArgs4Test("t1")
-	// as_meta.SetupTenantWithDefaultArgs4Test("t2")
-	// as_meta.UpdateTenant4Test("web-0", "t1")
-	// as_meta.UpdateTenant4Test("web-1", "t1")
-	// as_meta.UpdateTenant4Test("web-2", "t1")
-	// as_meta.UpdateTenant4Test("hello-node-7c7c59b7cb-6bsjg", "t2")
-	// var lstTs int64
 	lstTsMap := c.lstTsMap
 	tsContainer := c.tsContainer
 	hasNew := false
 	for {
+		time.Sleep(200 * time.Millisecond)
+		if atomic.LoadInt32(&c.shutdown) != 0 {
+			return
+		}
 		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
-
+		// st := time.Now().UnixNano()
 		podMetricsList, err := c.MetricsCli.MetricsV1beta1().PodMetricses(c.Namespace).List(
 			context.TODO(), metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
 		if err != nil {
 			panic(err.Error())
 		}
-
+		mint := int64(math.MaxInt64)
+		maxt := int64(0)
+		// et := time.Now().UnixNano()
+		// fmt.Printf("[ClusterManager]collectMetrics loop, api cost: %v ns\n", et-st)
 		for _, pod := range podMetricsList.Items {
-			// if pod.Name == "web-0" {
-			// 	fmt.Printf("podmetrics: %v \n", pod)
-			// }
 			lstTs, ok := lstTsMap[pod.Name]
 			if !ok || pod.Timestamp.Unix() != lstTs {
 				tsContainer.Insert(pod.Name, pod.Timestamp.Unix(),
@@ -112,14 +104,15 @@ func (c *ClusterManager) collectMetrics() {
 				snapshot := tsContainer.GetSnapshotOfTimeSeries(pod.Name)
 				// mint, maxt := cur_serires.GetMinMaxTime()
 				hasNew = true
-				fmt.Printf("%v mint,maxt: %v ~ %v\n", pod.Name, snapshot.MinTime, snapshot.MaxTime)
-				fmt.Printf("%v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
-					snapshot.AvgOfCpu,
-					snapshot.SampleCntOfCpu,
-					snapshot.AvgOfMem,
-					snapshot.SampleCntOfMem,
-				)
-				// }
+				mint = Min(snapshot.MinTime, mint)
+				maxt = Max(snapshot.MaxTime, maxt)
+				// fmt.Printf("[collectMetrics]%v mint,maxt: %v ~ %v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
+				// 	snapshot.MinTime, snapshot.MaxTime,
+				// 	snapshot.AvgOfCpu,
+				// 	snapshot.SampleCntOfCpu,
+				// 	snapshot.AvgOfMem,
+				// 	snapshot.SampleCntOfMem,
+				// )
 			}
 
 		}
@@ -128,19 +121,17 @@ func (c *ClusterManager) collectMetrics() {
 		if hasNew {
 			hasNew = false
 			tArr := c.AutoScaleMeta.GetTenantNames()
-			// tArr := []string{"t1", "t2"}
 			for _, tName := range tArr {
 				stats := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
-				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
+				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v time_range:%v~%v\n", tName,
 					stats[0].Avg(),
 					stats[0].Cnt(),
 					stats[1].Avg(),
 					stats[1].Cnt(),
+					mint, maxt,
 				)
 			}
 		}
-		// v, ok := as_meta.PodDescMap[]
-		// fmt.Printf("Podmetrics: %v \n", podMetricsList)
 	}
 
 }
@@ -150,7 +141,9 @@ func (c *ClusterManager) analyzeMetrics() {
 
 	// c.tsContainer.GetSnapshotOfTimeSeries()
 	defer c.wg.Done()
+	lastCpuUsage := float64(0)
 	for {
+		time.Sleep(100 * time.Millisecond)
 		if atomic.LoadInt32(&c.shutdown) != 0 {
 			return
 		}
@@ -159,13 +152,26 @@ func (c *ClusterManager) analyzeMetrics() {
 			if tenant.GetState() == TenantStatePause {
 				continue
 			}
-			if tenant.GetCntOfPods() == 0 {
-				c.AutoScaleMeta.ResizePodsOfTenant(tenant.MinCntOfPod, tenant.Name, c.tsContainer)
+			cntOfPods := tenant.GetCntOfPods()
+			if cntOfPods == 0 {
+				fmt.Printf("[analyzeMetrics] StateResume and tenant.GetCntOfPods() is 0, resume pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
+				c.AutoScaleMeta.ResizePodsOfTenant(0, tenant.MinCntOfPod, tenant.Name, c.tsContainer)
 			} else {
-				stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
-				bestPods, _ := ComputeBestPodsInRuleOfPM(tenant, stats[0].Avg(), DefaultCoreOfPod)
-				if bestPods != -1 {
-					c.AutoScaleMeta.ResizePodsOfTenant(bestPods, tenant.Name, c.tsContainer)
+				// TODO use mock for now, remenber revert back
+				// stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
+				// cpuusage := states[0].Avg()
+				CoreOfPod := DefaultCoreOfPod
+				cpuusage := MockComputeStatisticsOfTenant(CoreOfPod, cntOfPods, tenant.MaxCntOfPod)
+				if lastCpuUsage != cpuusage {
+					fmt.Printf("[MockComputeStatisticsOfTenant] mocked cpu usage: %v\n", cpuusage)
+					lastCpuUsage = cpuusage
+				}
+				bestPods, _ := ComputeBestPodsInRuleOfCompute(tenant, cpuusage, CoreOfPod)
+				if bestPods != -1 && cntOfPods != bestPods {
+					fmt.Printf("[analyzeMetrics] resize pods, from %v to  %v , tenant: %v\n", tenant.GetCntOfPods(), bestPods, tenant.Name)
+					c.AutoScaleMeta.ResizePodsOfTenant(cntOfPods, bestPods, tenant.Name, c.tsContainer)
+				} else {
+					// fmt.Printf("[analyzeMetrics] pods unchanged cnt:%v, bestCnt:%v, tenant:%v \n", tenant.GetCntOfPods(), bestPods, tenant.Name)
 				}
 			}
 			// tenant.addPodIntoTenant()
@@ -181,6 +187,7 @@ func Int32Ptr(val int32) *int32 {
 }
 
 func (c *ClusterManager) Shutdown() {
+	fmt.Println("[ClusterManager]Shutdown")
 	atomic.StoreInt32(&c.shutdown, 1)
 	c.watchMu.Lock()
 	c.watcher.Stop()
@@ -251,16 +258,6 @@ func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
 			// 	pod.Status.PodIP,
 			// 	len(pod.Status.ContainerStatuses))
 
-			// endpoints, ok := event.Object.(*v1.Endpoints)
-			// if !ok {
-			// 	panic("Could not cast to Endpoint")
-			// }
-			// fmt.Printf("%v %v\n", event.Type, event.Object)
-			// for _, endpoint := range endpoints.Subsets {
-			// 	for _, address := range endpoint.Addresses {
-			// 		fmt.Printf("%v\n", address.IP)
-			// 	}
-			// }
 		}
 	}
 
@@ -272,7 +269,6 @@ func (c *ClusterManager) scanStateOfPods() {
 
 // ignore error
 func (c *ClusterManager) loadPods() string {
-	//TODO implements
 	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
 	pods, err := c.K8sCli.CoreV1().Pods(c.Namespace).List(context.TODO(),
 		metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
@@ -288,31 +284,7 @@ func (c *ClusterManager) loadPods() string {
 
 // TODO load existed pods
 func (c *ClusterManager) initK8sComponents() {
-	// config, err := getK8sConfig()
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-	// c.MetricsCli, err = metricsv.NewForConfig(config)
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-	// c.K8sCli, err = kubernetes.NewForConfig(config)
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-	// c.Cli = kruiseclientset.NewForConfigOrDie(config)
-	// _, err = c.K8sCli.CoreV1().Namespaces().Get(context.TODO(), c.Namespace, metav1.GetOptions{})
-	// if err != nil {
-	// 	_, err = c.K8sCli.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
-	// 		ObjectMeta: metav1.ObjectMeta{
-	// 			Name: c.Namespace,
-	// 			Labels: map[string]string{
-	// 				"ns": c.Namespace,
-	// 			}}}, metav1.CreateOptions{})
-	// 	if err != nil {
-	// 		panic(err.Error())
-	// 	}
-	// }
+	// create cloneset if not exist
 	cloneSetList, err := c.Cli.AppsV1alpha1().CloneSets(c.Namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		panic(err.Error())
@@ -392,49 +364,16 @@ func (c *ClusterManager) initK8sComponents() {
 	} else {
 		c.CloneSet = retCloneset.DeepCopy()
 	}
+
+	// load k8s pods of cloneset
 	resVer := c.loadPods()
+
+	// TODO do we need scan stats of pods with incorrect state label
 	// c.scanStateOfPods()
+
+	// watch changes of pods
 	c.wg.Add(1)
 	go c.watchPodsLoop(resVer)
-	// labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": c.CloneSetName}}
-	// watcher, err := c.K8sCli.CoreV1().Pods(c.Namespace).Watch(context.TODO(),
-	// 	metav1.ListOptions{LabelSelector: labels.Set(labelSelector.MatchLabels).String()})
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-
-	// ch := watcher.ResultChan()
-
-	// // LISTEN TO CHANNEL
-	// for {
-	// 	e := <-ch
-	// 	pod, ok := e.Object.(*v1.Pod)
-	// 	if !ok {
-	// 		continue
-	// 	}
-	// 	fmt.Printf("act,ns,name,phase,reason,ip,noOfContainer: %v %v %v %v %v %v %v\n", e.Type,
-	// 		pod.Namespace,
-	// 		pod.Name,
-	// 		pod.Status.Phase,
-	// 		pod.Status.Reason,
-	// 		pod.Status.PodIP,
-	// 		len(pod.Status.ContainerStatuses))
-
-	// 	// endpoints, ok := event.Object.(*v1.Endpoints)
-	// 	// if !ok {
-	// 	// 	panic("Could not cast to Endpoint")
-	// 	// }
-	// 	// fmt.Printf("%v %v\n", event.Type, event.Object)
-	// 	// for _, endpoint := range endpoints.Subsets {
-	// 	// 	for _, address := range endpoint.Addresses {
-	// 	// 		fmt.Printf("%v\n", address.IP)
-	// 	// 	}
-	// 	// }
-	// }
-
-	// // for _, pod := range pods.Items {
-	// // fmt.Println(pod.Name, pod.Status.PodIP)
-	// // }
 }
 
 // TODO must implement!!! necessary
@@ -457,6 +396,8 @@ func initK8sEnv(Namespace string) (config *restclient.Config, K8sCli *kubernetes
 		panic(err.Error())
 	}
 	Cli = kruiseclientset.NewForConfigOrDie(config)
+
+	// create NameSpace if not exsist
 	_, err = K8sCli.CoreV1().Namespaces().Get(context.TODO(), Namespace, metav1.GetOptions{})
 	if err != nil {
 		_, err = K8sCli.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{

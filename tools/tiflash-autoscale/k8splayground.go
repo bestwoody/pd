@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"path/filepath"
 	"time"
 
@@ -172,37 +173,37 @@ func configmapGetAndUpdateExample() {
 	}
 }
 
-// func configmapPatchExample() {
-// 	config, err := outsideConfig()
-// 	clientset, err := kubernetes.NewForConfig(config)
-// 	// clientset.AppsV1().
-// 	if err != nil {
-// 		panic(err.Error())
-// 	}
-// 	// for {
-// 	// get pods in all the namespaces by omitting namespace
-// 	// Or specify namespace to get pods in particular namespace
-// 	configMap, err := clientset.CoreV1().ConfigMaps("tiflash-autoscale").Get(context.TODO(), "my-config-map", metav1.GetOptions{})
-// 	if err != nil {
-// 		panic(err.Error())
-// 	}
-// 	configMapCopy := configMap.DeepCopy()
-// 	configMapCopy.Data["ka"] = "vaa"
-// 	_, err = clientset.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), configMapCopy, metav1.UpdateOptions{})
-// 	if err != nil {
-// 		panic(err.Error())
-// 	}
-// 	configMapCopy.Data["ka"] = "vaaa"
-// 	_, err = clientset.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), configMapCopy, metav1.UpdateOptions{})
-// 	if err != nil {
-// 		panic(err.Error())
-// 	}
-// 	configMapCopy.Data["ka"] = "vaaaa"
-// 	_, err = clientset.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), configMapCopy, metav1.UpdateOptions{})
-// 	if err != nil {
-// 		panic(err.Error())
-// 	}
-// }
+func configmapPatchExample() {
+	config, err := outsideConfig()
+	clientset, err := kubernetes.NewForConfig(config)
+	// clientset.AppsV1().
+	if err != nil {
+		panic(err.Error())
+	}
+	// for {
+	// get pods in all the namespaces by omitting namespace
+	// Or specify namespace to get pods in particular namespace
+	configMap, err := clientset.CoreV1().ConfigMaps("tiflash-autoscale").Get(context.TODO(), "my-config-map", metav1.GetOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+	configMapCopy := configMap.DeepCopy()
+	configMapCopy.Data["ka"] = "vaa"
+	_, err = clientset.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), configMapCopy, metav1.UpdateOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+	configMapCopy.Data["ka"] = "vaaa"
+	_, err = clientset.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), configMapCopy, metav1.UpdateOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+	configMapCopy.Data["ka"] = "vaaaa"
+	_, err = clientset.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), configMapCopy, metav1.UpdateOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+}
 
 func OpenkruiseTest() {
 	config, err := outsideConfig()
@@ -351,14 +352,20 @@ func main2() {
 	}
 }
 
+func MockComputeStatisticsOfTenant(ts int, coresOfPod int) float64 {
+	// ts := time.Now().Unix()
+	// tsInMins := ts / 60
+	return (math.Sin(float64(ts)/10.0) + 1) / 2 * float64(coresOfPod)
+}
+
 func main() {
 	// OpenkruiseTest()
 	// main2()
 	// configmapGetAndUpdateExample()
 	// configmapPlayGround()
+	// configmapPatchExample()
 
 	cm := autoscale.NewClusterManager()
-
-	time.Sleep(60 * time.Second)
+	time.Sleep(3600 * time.Second)
 	cm.Shutdown()
 }

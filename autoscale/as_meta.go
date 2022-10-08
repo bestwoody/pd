@@ -3,6 +3,7 @@ package autoscale
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -173,11 +174,11 @@ func (c *TenantDesc) switchState(from int32, to int32) bool {
 	return atomic.CompareAndSwapInt32(&c.State, from, to)
 }
 
-func (c *TenantDesc) Pause() bool {
+func (c *TenantDesc) SyncStatePause() bool {
 	return c.switchState(TenantStateResume, TenantStatePause)
 }
 
-func (c *TenantDesc) Resume() bool {
+func (c *TenantDesc) SyncStateResume() bool {
 	return c.switchState(TenantStatePause, TenantStateResume)
 }
 
@@ -190,7 +191,7 @@ const (
 	DefaultMaxCntOfPod        = 4
 	DefaultCoreOfPod          = 8
 	DefaultLowerLimit         = 0.2
-	DefaultHigherLimit        = 0.8
+	DefaultUpperLimit         = 0.8
 	DefaultPrewarmPoolCap     = 5
 	CapacityOfStaticsAvgSigma = 6
 )
@@ -245,6 +246,7 @@ func NewAutoScaleMeta(config *restclient.Config) *AutoScaleMeta {
 
 func (c *AutoScaleMeta) loadTenants() {
 	c.SetupTenant("t1", 1, 4)
+	fmt.Printf("loadTenant, SetupTenant(t1, 1, 4)\n")
 	//TODO load tenants from config of control panel
 }
 
@@ -272,6 +274,7 @@ func (c *AutoScaleMeta) initConfigMap() {
 			panic(err.Error())
 		}
 	}
+	fmt.Printf("loadConfigMap %v\n", c.configMap.String())
 }
 
 func (c *AutoScaleMeta) RecoverStatesOfPods4Test() {
@@ -310,7 +313,7 @@ func (c *AutoScaleMeta) Pause(tenant string) bool {
 	if !ok {
 		return false
 	}
-	if v.Pause() {
+	if v.SyncStatePause() {
 		go c.removePodFromTenant(v.GetCntOfPods(), tenant)
 		return true
 	} else {
@@ -326,7 +329,7 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 	if !ok {
 		return false
 	}
-	if v.Resume() {
+	if v.SyncStateResume() {
 		// TODO ensure there is no pods now
 		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer)
 		return true
@@ -396,6 +399,20 @@ func ConfigMapPodState(str string) (int, string) {
 
 }
 
+func (c *AutoScaleMeta) handleK8sConfigMapsApiError(err error, caller string) {
+	configMapName := "readnode-pod-state"
+	errStr := err.Error()
+	fmt.Printf("[error][%v]K8sConfigMapsApiError, err: %+v\n", caller, errStr)
+	if strings.Contains(errStr, "please apply your changes to the latest version") {
+		retConfigMap, err := c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Get(context.TODO(), configMapName, metav1.GetOptions{})
+		if err != nil {
+			fmt.Printf("[error][%v]K8sConfigMapsApiError, failed to get latest version of configmap, err: %+v\n", caller, err.Error())
+		} else {
+			c.configMap = retConfigMap
+		}
+	}
+}
+
 // TODO mutex protect by COnfigMapMutex
 //
 //	func (c *AutoScaleMeta) configMapStateWarming(podName string) {
@@ -423,6 +440,7 @@ func (c *AutoScaleMeta) setConfigMapState(podName string, state int, optTenant s
 	c.configMap.Data[podName] = value
 	retConfigMap, err := c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), c.configMap, metav1.UpdateOptions{})
 	if err != nil {
+		c.handleK8sConfigMapsApiError(err, "AutoScaleMeta::setConfigMapState")
 		return err
 	}
 	c.configMap = retConfigMap
@@ -443,13 +461,16 @@ func (c *AutoScaleMeta) setConfigMapStateBatch(kvMap map[string]string) error {
 
 	retConfigMap, err := c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Update(context.TODO(), c.configMap, metav1.UpdateOptions{})
 	if err != nil {
+		c.handleK8sConfigMapsApiError(err, "AutoScaleMeta::setConfigMapState")
 		return err
 	}
+	fmt.Printf("[AutoScaleMeta]current configmap: %+v\n", retConfigMap.Data)
 	c.configMap = retConfigMap
 	return nil
 }
 
 func (c *AutoScaleMeta) addPreWarmFromPending(podName string, desc *PodDesc) {
+	fmt.Printf("[AutoScaleMeta]addPreWarmFromPending %v\n", podName)
 	c.pendingCnt-- // dec pending cnt
 
 	// c.PrewarmPods.pods[podName] = desc
@@ -477,8 +498,8 @@ func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	podDesc, ok := c.PodDescMap[name]
-	fmt.Printf("[updatePod] %v %v\n", name, pod.Status)
-	if !ok {
+	fmt.Printf("[updatePod] %v cur_ip:%v\n", name, pod.Status.PodIP)
+	if !ok { // new pod
 		c.pendingCnt++ // inc pending cnt
 		state := PodStateInit
 		tenantName := ""
@@ -495,10 +516,10 @@ func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
 		c.PodDescMap[name] = podDesc
 		if state == PodStateUnassigned {
 			c.addPreWarmFromPending(name, podDesc)
-			fmt.Printf("addPreWarmFromPending %v: %v\n", name, pod.Status.PodIP)
+			fmt.Printf("[UpdatePod]addPreWarmFromPending %v: %v\n", name, pod.Status.PodIP)
 		} else if state == PodStateAssigned {
 			c.updateLocalMetaPodOfTenant(name, podDesc, tenantName)
-			fmt.Printf("updateLocalMetaPodOfTenant %v: %v tenant: %v\n", name, pod.Status.PodIP, tenantName)
+			fmt.Printf("[UpdatePod]updateLocalMetaPodOfTenant %v: %v tenant: %v\n", name, pod.Status.PodIP, tenantName)
 		}
 
 	} else {
@@ -538,10 +559,10 @@ func SendGrpcReq() {
 }
 
 // TODO refine lock logic to prevent race
-func (c *AutoScaleMeta) ResizePodsOfTenant(target int, tenant string, tsContainer *TimeSeriesContainer) {
-	c.mu.Lock()
-	from := c.tenantMap[tenant].GetCntOfPods()
-	c.mu.Unlock()
+// TODO make it non-blocking between tenants
+func (c *AutoScaleMeta) ResizePodsOfTenant(from int, target int, tenant string, tsContainer *TimeSeriesContainer) {
+	fmt.Printf("[AutoScaleMeta]ResizePodsOfTenant from %v to %v , tenant:%v\n", from, target, tenant)
+	// TODO assert and validate "from" equal to current cntOfPod
 	if target > from {
 		c.addPodIntoTenant(target-from, tenant, tsContainer)
 	} else if target < from {
@@ -550,6 +571,7 @@ func (c *AutoScaleMeta) ResizePodsOfTenant(target int, tenant string, tsContaine
 }
 
 func (c *AutoScaleMeta) updateLocalMetaPodOfTenant(podName string, podDesc *PodDesc, tenant string) {
+	fmt.Printf("[AutoScaleMeta]updateLocalMetaPodOfTenant pod:%v tenant:%v\n", podName, tenant)
 	// c.mu.Lock()
 	// defer c.mu.Unlock()
 	tDesc, ok := c.tenantMap[tenant]
@@ -565,6 +587,7 @@ func (c *AutoScaleMeta) updateLocalMetaPodOfTenant(podName string, podDesc *PodD
 // return cnt fail to add
 // -1 is error
 func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer *TimeSeriesContainer) int {
+	fmt.Printf("[AutoScaleMeta::addPodIntoTenant] %v %v \n", addCnt, tenant)
 	cnt := addCnt
 	podsToAssign := make([]*PodDesc, 0, addCnt)
 	// tMu := c.getTenantLock(tenant)
@@ -589,10 +612,8 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 			v := c.PrewarmPods.RemovePod(k, true)
 			if v != nil {
 				podsToAssign = append(podsToAssign, v)
-				// DO we need setPod after assigned successfully? since assign api may fail
+				// TODO !!! DO we need setPod after assigned successfully? since assign api may fail
 				c.tenantMap[tenant].SetPod(k, v)
-				// c.tenantMap[tenant].pods[k] = v
-
 				cnt--
 			} else {
 				fmt.Println("[AutoScaleMeta::addPodIntoTenant] c.PrewarmPods.RemovePod fail, return nil!")
@@ -621,6 +642,7 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 }
 
 func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
+	fmt.Printf("[AutoScaleMeta::removePodFromTenant] %v %v \n", removeCnt, tenant)
 	cnt := removeCnt
 	podsToUnassign := make([]*PodDesc, 0, removeCnt)
 	// tMu := c.getTenantLock(tenant)
@@ -790,4 +812,10 @@ func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSe
 		}
 		return ret
 	}
+}
+
+func MockComputeStatisticsOfTenant(coresOfPod int, cntOfPods int, maxCntOfPods int) float64 {
+	ts := time.Now().Unix() / 2
+	// tsInMins := ts / 60
+	return math.Min((math.Sin(float64(ts)/10.0)+1)/2*float64(coresOfPod)*float64(maxCntOfPods)/float64(cntOfPods), 8)
 }
