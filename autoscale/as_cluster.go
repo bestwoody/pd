@@ -263,9 +263,9 @@ func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
 
 }
 
-func (c *ClusterManager) scanStateOfPods() {
-
-}
+// func (c *ClusterManager) scanStateOfPods() {
+// 	c.AutoScaleMeta.scanStateOfPods()
+// }
 
 // ignore error
 func (c *ClusterManager) loadPods() string {
@@ -370,6 +370,7 @@ func (c *ClusterManager) initK8sComponents() {
 
 	// TODO do we need scan stats of pods with incorrect state label
 	// c.scanStateOfPods()
+	c.AutoScaleMeta.ScanStateOfPods()
 
 	// watch changes of pods
 	c.wg.Add(1)
@@ -430,8 +431,7 @@ func NewClusterManager() *ClusterManager {
 		Cli:        Cli,
 	}
 	ret.initK8sComponents()
-	// ret.scanStateOfPods()
-	ret.recoverStatesOfPods() // TODO implemant
+
 	ret.wg.Add(2)
 	go ret.collectMetrics()
 	go ret.analyzeMetrics()

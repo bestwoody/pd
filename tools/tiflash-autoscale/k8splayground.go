@@ -4,12 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"math"
 	"path/filepath"
 	"time"
 
 	kruiseclientset "github.com/openkruise/kruise-api/client/clientset/versioned"
 	"github.com/tikv/pd/autoscale"
+	supervisor "github.com/tikv/pd/supervisor_proto"
+	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -356,6 +359,26 @@ func MockComputeStatisticsOfTenant(ts int, coresOfPod int) float64 {
 	// ts := time.Now().Unix()
 	// tsInMins := ts / 60
 	return (math.Sin(float64(ts)/10.0) + 1) / 2 * float64(coresOfPod)
+}
+
+func SupClient(podIP string, tenantName string) {
+	conn, err := grpc.Dial(podIP+":7000", grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+	c := supervisor.NewAssignClient(conn)
+
+	// Contact the server and print out its response.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	r, err := c.AssignTenant(ctx, &supervisor.AssignRequest{TenantID: tenantName})
+	if err != nil {
+		log.Fatalf("could not greet: %v", err)
+	}
+	log.Printf("Greeting: %s", r.GetTenantID())
 }
 
 func main() {
