@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -388,6 +389,10 @@ func main() {
 	// configmapPlayGround()
 	// configmapPatchExample()
 
+	autoscale.HardCodeEnvPdAddr = os.Getenv("PD_ADDR")
+	autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
+	fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
+	fmt.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
 	cm := autoscale.NewClusterManager()
 	time.Sleep(3600 * time.Second)
 	cm.Shutdown()

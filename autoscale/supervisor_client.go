@@ -16,6 +16,9 @@ const (
 	IsSupClientMock bool   = true
 )
 
+var HardCodeEnvTidbStatusAddr string
+var HardCodeEnvPdAddr string
+
 func AssignTenant(podIP string, tenantName string) (resp *supervisor.Result, err error) {
 	defer func() {
 		if err != nil || (resp != nil && resp.HasErr) {
@@ -36,7 +39,7 @@ func AssignTenant(podIP string, tenantName string) (resp *supervisor.Result, err
 		// Contact the server and print out its response.
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 		defer cancel()
-		r, err := c.AssignTenant(ctx, &supervisor.AssignRequest{TenantID: tenantName})
+		r, err := c.AssignTenant(ctx, &supervisor.AssignRequest{TenantID: tenantName, TidbStatusAddr: HardCodeEnvTidbStatusAddr, PdAddr: HardCodeEnvPdAddr})
 		// if err != nil {
 		// 	log.Printf("[error]AssignTenant fail: %v", err)
 		// 	return r, err

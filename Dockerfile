@@ -9,9 +9,9 @@ RUN apk add --no-cache \
     g++
 
 # Install jq for pd-ctl
-RUN cd / && \
-    wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 -O jq && \
-    chmod +x jq
+# RUN cd / && \
+#     wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 -O jq && \
+#     chmod +x jq
 
 RUN mkdir -p /go/src/github.com/tikv/pd
 WORKDIR /go/src/github.com/tikv/pd
@@ -24,15 +24,13 @@ RUN GO111MODULE=on go mod download
 
 COPY . .
 
-RUN make
+# RUN make
+RUN GOOS=linux go build -o ./autoscale  tools/tiflash-autoscale/k8splayground.go 
 
 FROM alpine:3.5
 
-COPY --from=builder /go/src/github.com/tikv/pd/bin/pd-server /pd-server
-COPY --from=builder /go/src/github.com/tikv/pd/bin/pd-ctl /pd-ctl
-COPY --from=builder /go/src/github.com/tikv/pd/bin/pd-recover /pd-recover
-COPY --from=builder /jq /usr/local/bin/jq
+COPY --from=builder /go/src/github.com/tikv/pd/autoscale/k8splayground /autoscale
 
-EXPOSE 2379 2380
+EXPOSE 1-65535
 
-ENTRYPOINT ["/pd-server"]
+ENTRYPOINT ["/bin/sh", "-c", "/autoscale > /hehe/server.log 2>&1"]
