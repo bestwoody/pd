@@ -33,4 +33,4 @@ COPY --from=builder /go/src/github.com/tikv/pd/autoscale/k8splayground /autoscal
 
 EXPOSE 1-65535
 
-ENTRYPOINT ["/bin/sh", "-c", "/autoscale > /hehe/server.log 2>&1"]
+ENTRYPOINT ["/bin/sh", "-c", "/autoscale > /var/log/autoscale.log"]

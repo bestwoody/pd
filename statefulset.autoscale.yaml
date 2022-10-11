@@ -40,9 +40,6 @@ spec:
           requests:
             cpu: "0.5"
         imagePullPolicy: Always
-        volumeMounts:
-        - name: www
-          mountPath: /hehe
         env:
         - name: MY_NODE_NAME
           valueFrom:
@@ -64,12 +61,4 @@ spec:
           value: "value1"
         - name: TIDB_STATUS_ADDR
           value: "value2"
-  volumeClaimTemplates:
-  - metadata:
-      name: www
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: "standard"
-      resources:
-        requests:
-          storage: 10Gi
+

@@ -394,6 +394,7 @@ func main() {
 	fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
 	fmt.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
 	cm := autoscale.NewClusterManager()
-	time.Sleep(3600 * time.Second)
+	// time.Sleep(3600 * time.Second)
+	cm.Wait()
 	cm.Shutdown()
 }
