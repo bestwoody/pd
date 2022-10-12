@@ -13,7 +13,7 @@ import (
 
 const (
 	SupervisorPort  string = "7000"
-	IsSupClientMock bool   = true
+	IsSupClientMock bool   = false
 )
 
 var HardCodeEnvTidbStatusAddr string

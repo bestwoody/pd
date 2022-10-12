@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"math"
 	"os"
@@ -76,7 +75,7 @@ func outsideConfig() (*restclient.Config, error) {
 // 		fmt.Println(err)
 // 	} else {
 // 		for _, item := range items {
-// 			fmt.Printf("%+v\n", item)
+// 			log.Printf("%+v\n", item)
 // 		}
 // 	}
 // }
@@ -221,9 +220,9 @@ func OpenkruiseTest() {
 		panic(err.Error())
 	}
 
-	fmt.Printf("len of cloneSetList: %v \n", len(cloneSetList.Items))
+	log.Printf("len of cloneSetList: %v \n", len(cloneSetList.Items))
 	for _, cloneSet := range cloneSetList.Items {
-		fmt.Printf("cloneSet: %v \n", cloneSet)
+		log.Printf("cloneSet: %v \n", cloneSet)
 
 		newReplicas := new(int32)
 		*newReplicas = 7
@@ -237,7 +236,7 @@ func OpenkruiseTest() {
 		if err != nil {
 			panic(err.Error())
 		} else {
-			fmt.Printf("changed cloneSet: %v \n", ret)
+			log.Printf("changed cloneSet: %v \n", ret)
 		}
 
 	}
@@ -280,7 +279,7 @@ func main2() {
 
 		for _, pod := range podMetricsList.Items {
 			// if pod.Name == "web-0" {
-			// 	fmt.Printf("podmetrics: %v \n", pod)
+			// 	log.Printf("podmetrics: %v \n", pod)
 			// }
 			lstTs, ok := lstTsMap[pod.Name]
 			if !ok || pod.Timestamp.Unix() != lstTs {
@@ -295,8 +294,8 @@ func main2() {
 				snapshot := tsContainer.GetSnapshotOfTimeSeries(pod.Name)
 				// mint, maxt := cur_serires.GetMinMaxTime()
 				hasNew = true
-				fmt.Printf("%v mint,maxt: %v ~ %v\n", pod.Name, snapshot.MinTime, snapshot.MaxTime)
-				fmt.Printf("%v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
+				log.Printf("%v mint,maxt: %v ~ %v\n", pod.Name, snapshot.MinTime, snapshot.MaxTime)
+				log.Printf("%v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
 					snapshot.AvgOfCpu,
 					snapshot.SampleCntOfCpu,
 					snapshot.AvgOfMem,
@@ -311,7 +310,7 @@ func main2() {
 			tArr := []string{"t1", "t2"}
 			for _, tName := range tArr {
 				stats1 := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
-				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
+				log.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
 					stats1[0].Avg(),
 					stats1[0].Cnt(),
 					stats1[1].Avg(),
@@ -320,7 +319,7 @@ func main2() {
 			}
 		}
 		// v, ok := as_meta.PodDescMap[]
-		// fmt.Printf("Podmetrics: %v \n", podMetricsList)
+		// log.Printf("Podmetrics: %v \n", podMetricsList)
 	}
 
 	// creates the clientset
@@ -336,20 +335,20 @@ func main2() {
 		if err != nil {
 			panic(err.Error())
 		}
-		fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
+		log.Printf("There are %d pods in the cluster\n", len(pods.Items))
 
 		// Examples for error handling:
 		// - Use helper functions e.g. errors.IsNotFound()
 		// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
 		_, err = clientset.CoreV1().Pods("default").Get(context.TODO(), "example-xxxxx", metav1.GetOptions{})
 		if errors.IsNotFound(err) {
-			fmt.Printf("Pod example-xxxxx not found in default namespace\n")
+			log.Printf("Pod example-xxxxx not found in default namespace\n")
 		} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-			fmt.Printf("Error getting pod %v\n", statusError.ErrStatus.Message)
+			log.Printf("Error getting pod %v\n", statusError.ErrStatus.Message)
 		} else if err != nil {
 			panic(err.Error())
 		} else {
-			fmt.Printf("Found example-xxxxx pod in default namespace\n")
+			log.Printf("Found example-xxxxx pod in default namespace\n")
 		}
 
 		time.Sleep(10 * time.Second)
@@ -391,8 +390,8 @@ func main() {
 
 	autoscale.HardCodeEnvPdAddr = os.Getenv("PD_ADDR")
 	autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
-	fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
-	fmt.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
+	log.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
+	log.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
 	cm := autoscale.NewClusterManager()
 	// time.Sleep(3600 * time.Second)
 	cm.Wait()

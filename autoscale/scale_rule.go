@@ -2,6 +2,7 @@ package autoscale
 
 import (
 	"fmt"
+	"log"
 	"math"
 )
 
@@ -78,11 +79,11 @@ func ComputeBestPodsInRuleOfCompute(tenantDesc *TenantDesc, cpuusage float64, co
 			if targetCpuUsage <= lowLimitOfCpuUsage {
 				// check if targetCpuUsage can triger scale in which will cause fluctuate
 				// skip if true
-				fmt.Printf("[ComputeBestPodsInRuleOfCompute]targetCpuUsage <= lowLimitOfCpuUsage, %v vs %v\n", targetCpuUsage, lowLimitOfCpuUsage)
+				log.Printf("[ComputeBestPodsInRuleOfCompute]targetCpuUsage <= lowLimitOfCpuUsage, %v vs %v\n", targetCpuUsage, lowLimitOfCpuUsage)
 				return -1, 0
 			}
 			if targetCntOfPod < oldCntOfPods {
-				fmt.Printf("[ComputeBestPodsInRuleOfCompute]targetCntOfPod < oldCntOfPods, %v vs %v\n", targetCntOfPod, oldCntOfPods)
+				log.Printf("[ComputeBestPodsInRuleOfCompute]targetCntOfPod < oldCntOfPods, %v vs %v\n", targetCntOfPod, oldCntOfPods)
 				return -1, 0
 			}
 			ret := MinInt(targetCntOfPod, maxCntOfPods)
@@ -91,11 +92,11 @@ func ComputeBestPodsInRuleOfCompute(tenantDesc *TenantDesc, cpuusage float64, co
 			if targetCpuUsage >= upLimitOfCpuUsage {
 				// check if targetCpuUsage can triger scale out which will cause fluctuate
 				// skip if true
-				fmt.Printf("[ComputeBestPodsInRuleOfCompute]targetCpuUsage >= upLimitOfCpuUsage, %v vs %v\n", targetCpuUsage, upLimitOfCpuUsage)
+				log.Printf("[ComputeBestPodsInRuleOfCompute]targetCpuUsage >= upLimitOfCpuUsage, %v vs %v\n", targetCpuUsage, upLimitOfCpuUsage)
 				return -1, 0
 			}
 			if targetCntOfPod > oldCntOfPods {
-				fmt.Printf("[ComputeBestPodsInRuleOfCompute]targetCntOfPod > oldCntOfPods, %v vs %v\n", targetCntOfPod, oldCntOfPods)
+				log.Printf("[ComputeBestPodsInRuleOfCompute]targetCntOfPod > oldCntOfPods, %v vs %v\n", targetCntOfPod, oldCntOfPods)
 				return -1, 0
 			}
 			ret := MaxInt(targetCntOfPod, minCntOfPods)

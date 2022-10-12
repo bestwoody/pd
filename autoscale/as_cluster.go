@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"math"
 	"path/filepath"
 	"sync"
@@ -140,7 +141,7 @@ func (c *ClusterManager) analyzeMetrics() {
 
 	// c.tsContainer.GetSnapshotOfTimeSeries()
 	defer c.wg.Done()
-	lastCpuUsage := float64(0)
+	lastTs := int64(0)
 	for {
 		time.Sleep(100 * time.Millisecond)
 		if atomic.LoadInt32(&c.shutdown) != 0 {
@@ -156,14 +157,16 @@ func (c *ClusterManager) analyzeMetrics() {
 				fmt.Printf("[analyzeMetrics] StateResume and tenant.GetCntOfPods() is 0, resume pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
 				c.AutoScaleMeta.ResizePodsOfTenant(0, tenant.MinCntOfPod, tenant.Name, c.tsContainer)
 			} else {
-				// TODO use mock for now, remenber revert back
-				// stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
-				// cpuusage := states[0].Avg()
+				states := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
+				cpuusage := states[0].Avg()
+
+				//Mock Metrics
 				CoreOfPod := DefaultCoreOfPod
-				cpuusage := MockComputeStatisticsOfTenant(CoreOfPod, cntOfPods, tenant.MaxCntOfPod)
-				if lastCpuUsage != cpuusage {
-					fmt.Printf("[MockComputeStatisticsOfTenant] mocked cpu usage: %v\n", cpuusage)
-					lastCpuUsage = cpuusage
+				curTs := time.Now().Unix()
+				// cpuusage := MockComputeStatisticsOfTenant(CoreOfPod, cntOfPods, tenant.MaxCntOfPod)
+				if lastTs != curTs {
+					log.Printf("[ComputeStatisticsOfTenant] cpu usage: %v\n", cpuusage)
+					lastTs = curTs
 				}
 				bestPods, _ := ComputeBestPodsInRuleOfCompute(tenant, cpuusage, CoreOfPod)
 				if bestPods != -1 && cntOfPods != bestPods {
@@ -357,7 +360,7 @@ func (c *ClusterManager) initK8sComponents() {
 								},
 								Name:            "supervisor",
 								Image:           "bestwoody/supervisor:1",
-								ImagePullPolicy: "Never",
+								ImagePullPolicy: "Always",
 								// VolumeMounts: []v1.VolumeMount{
 								// 	{
 								// 		Name:      volumeName,
