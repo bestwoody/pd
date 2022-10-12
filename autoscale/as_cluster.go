@@ -319,11 +319,45 @@ func (c *ClusterManager) initK8sComponents() {
 							"app": c.CloneSetName,
 						},
 					},
+					// pod anti affinity
 					Spec: v1.PodSpec{
+						NodeSelector: map[string]string{
+							"node.kubernetes.io/instance-type": "m6a.2xlarge",
+						},
+						Affinity: &v1.Affinity{
+							PodAntiAffinity: &v1.PodAntiAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
+									{
+										LabelSelector: &metav1.LabelSelector{
+											MatchExpressions: []metav1.LabelSelectorRequirement{
+												{
+													Key:      "app",
+													Operator: "In",
+													Values:   []string{c.CloneSetName, "autoscale"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						// container
 						Containers: []v1.Container{
 							{
-								Name:  "web",
-								Image: "nginx:1.12",
+								// ENV
+								Env: []v1.EnvVar{
+									{
+										Name: "POD_IP",
+										ValueFrom: &v1.EnvVarSource{
+											FieldRef: &v1.ObjectFieldSelector{
+												FieldPath: "status.podIP",
+											},
+										},
+									},
+								},
+								Name:            "supervisor",
+								Image:           "bestwoody/supervisor:1",
+								ImagePullPolicy: "Never",
 								// VolumeMounts: []v1.VolumeMount{
 								// 	{
 								// 		Name:      volumeName,
