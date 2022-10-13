@@ -20,8 +20,10 @@ const (
 	PodStateUnassigned      = 0
 	PodStateAssigned        = 1
 	PodStateInit            = 2
-	TenantStateResume       = 0
-	TenantStatePause        = 1
+	TenantStateResumed      = 0
+	TenantStateResuming     = 1
+	TenantStatePaused       = 2
+	TenantStatePausing      = 3
 	CmRnPodStateUnassigned  = 0
 	CmRnPodStateUnassigning = 1
 	CmRnPodStateAssigning   = 2
@@ -189,11 +191,11 @@ func (c *TenantDesc) switchState(from int32, to int32) bool {
 }
 
 func (c *TenantDesc) SyncStatePause() bool {
-	return c.switchState(TenantStateResume, TenantStatePause)
+	return c.switchState(TenantStateResumed, TenantStatePaused)
 }
 
 func (c *TenantDesc) SyncStateResume() bool {
-	return c.switchState(TenantStatePause, TenantStateResume)
+	return c.switchState(TenantStatePaused, TenantStateResumed)
 }
 
 func (c *TenantDesc) GetState() int32 {
