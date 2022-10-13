@@ -936,7 +936,6 @@ func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSe
 		return nil
 	} else {
 		podsOfTenant := tenantDesc.GetPodNames()
-		log.Printf("[%v.ComputeStatisticsOfTenant]pods Of Tenant %v: %+v\n", caller, tenantName, podsOfTenant)
 		c.mu.Unlock()
 		ret := make([]AvgSigma, CapacityOfStaticsAvgSigma)
 		for _, podName := range podsOfTenant {

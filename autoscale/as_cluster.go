@@ -173,8 +173,9 @@ func (c *ClusterManager) analyzeMetrics() {
 				curTs := time.Now().Unix()
 				// cpuusage := MockComputeStatisticsOfTenant(CoreOfPod, cntOfPods, tenant.MaxCntOfPod)
 				if lastTs != curTs {
-					log.Printf("[ComputeStatisticsOfTenant]Tenant %v cpu usage: %v %v\n", tenant.Name,
-						stats[0].Avg(), stats[0].Cnt())
+					// log.Printf("[analyzeMetrics]ComputeStatisticsOfTenant, pods Of Tenant %v: %+v\n", tenant.Name, tenant.GetPodNames())
+					log.Printf("[analyzeMetrics]ComputeStatisticsOfTenant, Tenant %v , cpu usage: %v %v , pods: %+v \n", tenant.Name,
+						stats[0].Avg(), stats[0].Cnt(), tenant.GetPodNames())
 					// log.Printf("[ComputeStatisticsOfTenant] cpu usage: %v\n", cpuusage)
 					lastTs = curTs
 				}
