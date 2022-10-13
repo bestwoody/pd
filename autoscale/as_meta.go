@@ -2,7 +2,6 @@ package autoscale
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"math"
 	"strings"
@@ -205,8 +204,8 @@ const (
 	DefaultMinCntOfPod        = 1
 	DefaultMaxCntOfPod        = 4
 	DefaultCoreOfPod          = 8
-	DefaultLowerLimit         = 0.2
-	DefaultUpperLimit         = 0.8
+	DefaultLowerLimit         = 0.2 // TODO revert into 0.2
+	DefaultUpperLimit         = 0.8 // TODO revert into 0.8
 	DefaultPrewarmPoolCap     = 5
 	CapacityOfStaticsAvgSigma = 6
 )
@@ -382,6 +381,22 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 		return false
 	}
 }
+
+// func (c *AutoScaleMeta) GetState(tenant string) string {
+// 	c.mu.Lock()
+// 	defer c.mu.Unlock()
+// 	v, ok := c.tenantMap[tenant]
+// 	if !ok {
+// 		return "pa"
+// 	}
+// 	if v.SyncStateResume() {
+// 		// TODO ensure there is no pods now
+// 		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer)
+// 		return true
+// 	} else {
+// 		return false
+// 	}
+// }
 
 func (cur *AutoScaleMeta) CreateOrGetPodDesc(podName string, createOrGet bool) *PodDesc {
 	val, ok := cur.PodDescMap[podName]
@@ -571,28 +586,30 @@ func (c *AutoScaleMeta) UpdatePod(pod *v1.Pod) {
 	} else {
 		if podDesc.Name == "" {
 			//TODO handle
-			log.Printf("exception case of Pod %v\n", name)
+			log.Printf("[UpdatePod]exception case of Pod %v\n", name)
 		} else {
 			if podDesc.IP == "" {
 				if pod.Status.PodIP != "" {
+					podDesc.IP = pod.Status.PodIP
 					c.addPreWarmFromPending(name, podDesc)
-					log.Printf("preWarm Pod %v: %v\n", name, pod.Status.PodIP)
+					log.Printf("[UpdatePod]preWarm Pod %v: %v\n", name, pod.Status.PodIP)
 				} else {
-					log.Printf("preparing Pod %v\n", name)
+					log.Printf("[UpdatePod]preparing Pod %v\n", name)
 				}
 
 			} else {
 				if pod.Status.PodIP == "" {
 					//TODO handle
 					c.handleAccidentalPodDeletion(pod)
-					log.Printf("accidental Deletion of Pod %v\n", name)
+					log.Printf("[UpdatePod]accidental Deletion of Pod %v\n", name)
 				} else {
 					if podDesc.IP != pod.Status.PodIP {
+						podDesc.IP = pod.Status.PodIP
 						c.handleChangeOfPodIP(pod)
-						log.Printf("ipChange Pod %v: %v -> %v\n", name, podDesc.IP, pod.Status.PodIP)
+						log.Printf("[warn][UpdatePod]ipChange Pod %v: %v -> %v\n", name, podDesc.IP, pod.Status.PodIP)
 					} else {
 						// podDesc.pod = pod
-						log.Printf("keep Pod %v\n", name)
+						log.Printf("[UpdatePod]keep Pod %v\n", name)
 					}
 				}
 			}
@@ -685,13 +702,17 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 				podsToAssign = append(podsToAssign, v)
 				cnt--
 			} else {
-				fmt.Println("[AutoScaleMeta::addPodIntoTenant] c.PrewarmPods.RemovePod fail, return nil!")
+				log.Println("[AutoScaleMeta::addPodIntoTenant] c.PrewarmPods.RemovePod fail, return nil!")
 			}
 		} else {
 			//enough pods, break early
 			break
 		}
 	}
+	for _, pod2assign := range podsToAssign {
+		log.Printf("[AutoScaleMeta::addPodIntoTenant] podsToAssign(name, ip): %v %v\n", pod2assign.Name, pod2assign.IP)
+	}
+
 	c.mu.Unlock()
 	// tMu.Unlock()
 	statesDeltaMap := make(map[string]string)
@@ -703,8 +724,10 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 		if err != nil || resp.HasErr {
 			// HandleAssignError
 			if err != nil { // grpc error, undo
+				log.Printf("[error][AutoScaleMeta::addPodIntoTenant] grpc error, undo , err: %v\n", err.Error())
 				undoList = append(undoList, v)
 			} else { // app api error , correct its state
+				log.Printf("[error][AutoScaleMeta::addPodIntoTenant] app api error , err: %v\n", resp.ErrInfo)
 				c.mu.Lock()
 				c.updateLocalMetaPodOfTenant(v.Name, v, resp.TenantID)
 				c.mu.Unlock()
@@ -718,6 +741,9 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 			tsContainer.ResetMetricsOfPod(v.Name)
 			c.mu.Unlock()
 		}
+	}
+	if len(undoList) != 0 {
+		log.Printf("[AutoScaleMeta::addPodIntoTenant] len(undoList) : %v\n", len(undoList))
 	}
 	// undo failed works
 	c.mu.Lock()
@@ -757,7 +783,7 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 				podsToUnassign = append(podsToUnassign, v)
 				cnt--
 			} else {
-				fmt.Println("[AutoScaleMeta::removePodFromTenant] tenantDesc.RemovePod(k, true) fail, return nil!!!")
+				log.Println("[AutoScaleMeta::removePodFromTenant] tenantDesc.RemovePod(k, true) fail, return nil!!!")
 			}
 		} else {
 			//enough pods, break early
@@ -774,8 +800,10 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 		if err != nil || resp.HasErr {
 			// HandleUnassignError
 			if err != nil { // grpc error, undo
+				log.Printf("[error][AutoScaleMeta::removePodFromTenant] grpc error, undo , err: %v\n", err.Error())
 				undoList = append(undoList, v)
 			} else { // app api error , correct its state
+				log.Printf("[error][AutoScaleMeta::removePodFromTenant] app api error, undo , err: %v\n", resp.ErrInfo)
 				c.mu.Lock()
 				c.updateLocalMetaPodOfTenant(v.Name, v, resp.TenantID)
 				c.mu.Unlock()
@@ -899,7 +927,7 @@ func (c *AutoScaleMeta) UpdateTenant4Test(podName string, newTenant string) bool
 	return true
 }
 
-func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSeriesContainer) []AvgSigma {
+func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSeriesContainer, caller string) []AvgSigma {
 	c.mu.Lock()
 
 	tenantDesc, ok := c.tenantMap[tenantName]
@@ -908,9 +936,35 @@ func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSe
 		return nil
 	} else {
 		podsOfTenant := tenantDesc.GetPodNames()
+		log.Printf("[%v.ComputeStatisticsOfTenant]pods Of Tenant %v: %+v\n", caller, tenantName, podsOfTenant)
 		c.mu.Unlock()
 		ret := make([]AvgSigma, CapacityOfStaticsAvgSigma)
 		for _, podName := range podsOfTenant {
+
+			// // FOR DEBUG
+			// tsc.Dump(podName)
+			// snapshot := tsc.GetSnapshotOfTimeSeries(podName)
+			// if snapshot != nil {
+			// 	log.Printf("[%v.ComputeStatisticsOfTenant]tenant: %v pod: %v mint,maxt: %v ~ %v statistics: cpu: %v %v mem: %v %v\n",
+			// 		caller,
+			// 		tenantName, podName,
+			// 		snapshot.MinTime, snapshot.MaxTime,
+			// 		snapshot.AvgOfCpu,
+			// 		snapshot.SampleCntOfCpu,
+			// 		snapshot.AvgOfMem,
+			// 		snapshot.SampleCntOfMem,
+			// 	)
+			// } else {
+			// 	stats := tsc.GetStatisticsOfPod(podName)
+			// 	if stats == nil {
+			// 		log.Printf("[%v.ComputeStatisticsOfTenant]tenant: %v pod: %v snapshot: nil\n", caller,
+			// 			tenantName, podName)
+			// 	} else {
+			// 		log.Printf("[%v.ComputeStatisticsOfTenant]tenant: %v pod: %v mint,maxt: nil, statistics: cpu: %v %v mem: %v %v\n", caller,
+			// 			tenantName, podName, stats[0].Avg(), stats[0].Cnt(), stats[1].Avg(), stats[1].Cnt())
+			// 	}
+			// }
+
 			Merge(ret, tsc.GetStatisticsOfPod(podName))
 		}
 		return ret

@@ -88,10 +88,11 @@ func (c *ClusterManager) collectMetrics() {
 		mint := int64(math.MaxInt64)
 		maxt := int64(0)
 		// et := time.Now().UnixNano()
-		// fmt.Printf("[ClusterManager]collectMetrics loop, api cost: %v ns\n", et-st)
+		// log.Printf("[ClusterManager]collectMetrics loop, api cost: %v ns\n", et-st)
+		// pendLogStr := ""
 		for _, pod := range podMetricsList.Items {
 			lstTs, ok := lstTsMap[pod.Name]
-			if !ok || pod.Timestamp.Unix() != lstTs {
+			if !ok || pod.Timestamp.Unix() > lstTs {
 				tsContainer.Insert(pod.Name, pod.Timestamp.Unix(),
 					[]float64{
 						pod.Containers[0].Usage.Cpu().AsApproximateFloat64(),
@@ -106,7 +107,14 @@ func (c *ClusterManager) collectMetrics() {
 				hasNew = true
 				mint = Min(snapshot.MinTime, mint)
 				maxt = Max(snapshot.MaxTime, maxt)
-				// fmt.Printf("[collectMetrics]%v mint,maxt: %v ~ %v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
+				// pendLogStr += fmt.Sprintf("[collectMetrics]%v mint,maxt: %v ~ %v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
+				// 	snapshot.MinTime, snapshot.MaxTime,
+				// 	snapshot.AvgOfCpu,
+				// 	snapshot.SampleCntOfCpu,
+				// 	snapshot.AvgOfMem,
+				// 	snapshot.SampleCntOfMem,
+				// )
+				// log.Printf("[collectMetrics]%v mint,maxt: %v ~ %v statistics: cpu: %v %v mem: %v %v\n", pod.Name,
 				// 	snapshot.MinTime, snapshot.MaxTime,
 				// 	snapshot.AvgOfCpu,
 				// 	snapshot.SampleCntOfCpu,
@@ -122,8 +130,8 @@ func (c *ClusterManager) collectMetrics() {
 			hasNew = false
 			tArr := c.AutoScaleMeta.GetTenantNames()
 			for _, tName := range tArr {
-				stats := as_meta.ComputeStatisticsOfTenant(tName, tsContainer)
-				fmt.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v time_range:%v~%v\n", tName,
+				stats := as_meta.ComputeStatisticsOfTenant(tName, tsContainer, "collectMetrics")
+				log.Printf("[collectMetrics]Tenant %v statistics: cpu: %v %v mem: %v %v time_range:%v~%v\n", tName,
 					stats[0].Avg(),
 					stats[0].Cnt(),
 					stats[1].Avg(),
@@ -154,29 +162,31 @@ func (c *ClusterManager) analyzeMetrics() {
 			}
 			cntOfPods := tenant.GetCntOfPods()
 			if cntOfPods == 0 {
-				fmt.Printf("[analyzeMetrics] StateResume and tenant.GetCntOfPods() is 0, resume pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
+				log.Printf("[analyzeMetrics] StateResume and tenant.GetCntOfPods() is 0, resume pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
 				c.AutoScaleMeta.ResizePodsOfTenant(0, tenant.MinCntOfPod, tenant.Name, c.tsContainer)
 			} else {
-				states := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer)
-				cpuusage := states[0].Avg()
+				stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer, "analyzeMetrics")
+				cpuusage := stats[0].Avg()
 
 				//Mock Metrics
 				CoreOfPod := DefaultCoreOfPod
 				curTs := time.Now().Unix()
 				// cpuusage := MockComputeStatisticsOfTenant(CoreOfPod, cntOfPods, tenant.MaxCntOfPod)
 				if lastTs != curTs {
-					log.Printf("[ComputeStatisticsOfTenant] cpu usage: %v\n", cpuusage)
+					log.Printf("[ComputeStatisticsOfTenant]Tenant %v cpu usage: %v %v\n", tenant.Name,
+						stats[0].Avg(), stats[0].Cnt())
+					// log.Printf("[ComputeStatisticsOfTenant] cpu usage: %v\n", cpuusage)
 					lastTs = curTs
 				}
 				bestPods, _ := ComputeBestPodsInRuleOfCompute(tenant, cpuusage, CoreOfPod)
 				if bestPods != -1 && cntOfPods != bestPods {
-					fmt.Printf("[analyzeMetrics] resize pods, from %v to  %v , tenant: %v\n", tenant.GetCntOfPods(), bestPods, tenant.Name)
+					log.Printf("[analyzeMetrics] resize pods, from %v to  %v , tenant: %v\n", tenant.GetCntOfPods(), bestPods, tenant.Name)
 					c.AutoScaleMeta.ResizePodsOfTenant(cntOfPods, bestPods, tenant.Name, c.tsContainer)
 				} else {
-					// fmt.Printf("[analyzeMetrics] pods unchanged cnt:%v, bestCnt:%v, tenant:%v \n", tenant.GetCntOfPods(), bestPods, tenant.Name)
+					// log.Printf("[analyzeMetrics] pods unchanged cnt:%v, bestCnt:%v, tenant:%v \n", tenant.GetCntOfPods(), bestPods, tenant.Name)
 				}
 			}
-			// tenant.addPodIntoTenant()
+			// tenant.IntoTenant()
 		}
 	}
 
@@ -189,7 +199,7 @@ func Int32Ptr(val int32) *int32 {
 }
 
 func (c *ClusterManager) Shutdown() {
-	fmt.Println("[ClusterManager]Shutdown")
+	log.Println("[ClusterManager]Shutdown")
 	atomic.StoreInt32(&c.shutdown, 1)
 	c.watchMu.Lock()
 	c.watcher.Stop()
@@ -232,7 +242,7 @@ func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
 		for {
 			e, more := <-ch
 			if !more {
-				fmt.Printf("watchPods channel closed\n")
+				log.Printf("watchPods channel closed\n")
 				break
 			}
 			pod, ok := e.Object.(*v1.Pod)
@@ -252,7 +262,7 @@ func (c *ClusterManager) watchPodsLoop(resourceVersion string) {
 			case watch.Error, watch.Bookmark: //TODO handle it
 				continue
 			}
-			// fmt.Printf("act,ns,name,phase,reason,ip,noOfContainer: %v %v %v %v %v %v %v\n", e.Type,
+			// log.Printf("act,ns,name,phase,reason,ip,noOfContainer: %v %v %v %v %v %v %v\n", e.Type,
 			// 	pod.Namespace,
 			// 	pod.Name,
 			// 	pod.Status.Phase,
@@ -291,7 +301,7 @@ func (c *ClusterManager) initK8sComponents() {
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Printf("list clonneSet: %+v \n", len(cloneSetList.Items))
+	log.Printf("list clonneSet: %+v \n", len(cloneSetList.Items))
 	found := false
 	for _, cloneSet := range cloneSetList.Items {
 		if cloneSet.Name == c.CloneSetName {
@@ -331,6 +341,7 @@ func (c *ClusterManager) initK8sComponents() {
 							PodAntiAffinity: &v1.PodAntiAffinity{
 								RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
 									{
+										TopologyKey: "kubernetes.io/hostname",
 										LabelSelector: &metav1.LabelSelector{
 											MatchExpressions: []metav1.LabelSelectorRequirement{
 												{
@@ -389,10 +400,10 @@ func (c *ClusterManager) initK8sComponents() {
 				// },
 			},
 		}
-		fmt.Println("create clonneSet")
+		log.Println("create clonneSet")
 		retCloneset, err = c.Cli.AppsV1alpha1().CloneSets(c.Namespace).Create(context.TODO(), &cloneSet, metav1.CreateOptions{})
 	} else {
-		fmt.Println("get clonneSet")
+		log.Println("get clonneSet")
 		retCloneset, err = c.Cli.AppsV1alpha1().CloneSets(c.Namespace).Get(context.TODO(), c.CloneSetName, metav1.GetOptions{})
 	}
 	if err != nil {
@@ -415,7 +426,7 @@ func (c *ClusterManager) initK8sComponents() {
 
 // TODO must implement!!! necessary
 func (c *ClusterManager) recoverStatesOfPods() {
-	fmt.Println("[ClusterManager] recoverStatesOfPods(): unimplement")
+	log.Println("[ClusterManager] recoverStatesOfPods(): unimplement")
 	// c.AutoScaleMeta.recoverStatesOfPods()
 }
 

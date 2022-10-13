@@ -1,7 +1,6 @@
 package autoscale
 
 import (
-	"fmt"
 	"log"
 	"math"
 )
@@ -34,7 +33,7 @@ func ComputeBestPodsInRuleOfPM(tenantDesc *TenantDesc, cpuusage float64, coreOfP
 
 func ComputeBestPodsInRuleOfCompute(tenantDesc *TenantDesc, cpuusage float64, coreOfPod int) (int, int /*delta*/) {
 	if tenantDesc == nil {
-		fmt.Println("[ComputeBestPodsInRuleOfCompute]tenantDesc == nil")
+		log.Println("[ComputeBestPodsInRuleOfCompute]tenantDesc == nil")
 		return -1, 0
 	}
 	lowerLimitOfGlobalPercentage := DefaultLowerLimit
@@ -49,7 +48,7 @@ func ComputeBestPodsInRuleOfCompute(tenantDesc *TenantDesc, cpuusage float64, co
 		minCntOfPods := tenantDesc.MinCntOfPod
 		maxCntOfPods := tenantDesc.MaxCntOfPod
 		if lowLimitOfCpuUsage+upLimitOfCpuUsage == 0 {
-			fmt.Println("[ComputeBestPodsInRuleOfCompute]lowLimitOfCpuUsage+upLimitOfCpuUsage == 0")
+			log.Println("[ComputeBestPodsInRuleOfCompute]lowLimitOfCpuUsage+upLimitOfCpuUsage == 0")
 			return -1, 0
 		}
 		logicalTargetCpuUsageInGlobalPercentage := (lowerLimitOfGlobalPercentage + upperlimitOfGlobalPercentage) / 2

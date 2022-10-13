@@ -2,6 +2,7 @@ package autoscale
 
 import (
 	"container/list"
+	"log"
 	"sync"
 	"time"
 )
@@ -61,10 +62,30 @@ func (c *SimpleTimeSeries) Reset() {
 	for c.series.Len() > 0 {
 		c.series.Remove(c.series.Front())
 	}
-	for _, v := range c.Statistics {
-		v.Reset()
+	for i, _ := range c.Statistics {
+		c.Statistics[i].Reset()
 	}
 	c.max_time = 0
+}
+
+type TimeValPair struct {
+	time  int64
+	value float64
+}
+
+func (c *SimpleTimeSeries) Dump(podName string) {
+	l := c.series
+	arr := make([]TimeValPair, 0, l.Len())
+	for e := l.Front(); e != nil; e = e.Next() {
+		ts := e.Value.(*TimeValues)
+		if len(ts.values) > 0 {
+			arr = append(arr, TimeValPair{ts.time, ts.values[0]})
+		} else {
+			arr = append(arr, TimeValPair{ts.time, -1})
+		}
+		// do something with e.Value
+	}
+	log.Printf("[SimpleTimeSeries]podname: %v , dump arr: %v %+v\n", podName, len(arr), arr)
 }
 
 func (c *SimpleTimeSeries) Cpu() *AvgSigma {
@@ -104,6 +125,9 @@ func (cur *AvgSigma) Merge(o *AvgSigma) {
 }
 
 func Sub(cur []AvgSigma, values []float64) {
+	if len(values) == 0 {
+		log.Printf("[error]Sub error empty values\n")
+	}
 	for i, value := range values {
 		cur[i].Sub(value)
 	}
@@ -165,6 +189,16 @@ func (c *TimeSeriesContainer) GetStatisticsOfPod(podname string) []AvgSigma {
 	return ret
 }
 
+func (c *TimeSeriesContainer) Dump(podname string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.seriesMap[podname]
+	if !ok {
+		return
+	}
+	v.Dump(podname)
+}
+
 func (c *TimeSeriesContainer) GetSnapshotOfTimeSeries(podname string) *StatsOfTimeSeries {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -173,7 +207,9 @@ func (c *TimeSeriesContainer) GetSnapshotOfTimeSeries(podname string) *StatsOfTi
 		return nil
 	}
 	minTime, maxTime := v.getMinMaxTime()
-
+	if maxTime == 0 && minTime == 0 {
+		return nil
+	}
 	return &StatsOfTimeSeries{AvgOfCpu: v.Cpu().Avg(),
 		SampleCntOfCpu: v.Cpu().Cnt(),
 		AvgOfMem:       v.Mem().Avg(),
@@ -187,12 +223,20 @@ func (c *TimeSeriesContainer) ResetMetricsOfPod(podname string) {
 	v, ok := c.seriesMap[podname]
 	if ok {
 		v.Reset()
+		log.Printf("[ResetMetricsOfPod]set metrics of pod %v , cnt:%v cond1:%v  cond1&cond2: %v \n", podname, v.Cpu().Cnt(), (v.series != nil), (v.series != nil && v.series.Front() != nil))
+	} else {
+		log.Printf("[error]Reset pod %v fail\n", podname)
 	}
 }
 
 func (cur *SimpleTimeSeries) getMinMaxTime() (int64, int64) {
-	min_time := cur.series.Front().Value.(*TimeValues).time
-	return min_time, cur.max_time
+	if cur.series != nil && cur.series.Front() != nil {
+		min_time := cur.series.Front().Value.(*TimeValues).time
+		return min_time, cur.max_time
+	} else {
+		log.Printf("[error]getMinMaxTime fail, cnt:%v cond1:%v  cond1&cond2: %v \n", cur.Cpu().Cnt(), (cur.series != nil), (cur.series != nil && cur.series.Front() != nil))
+		return 0, 0
+	}
 }
 
 func (cur *SimpleTimeSeries) append(time int64, values []float64, cap int) {

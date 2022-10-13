@@ -22,12 +22,19 @@ var HardCodeEnvPdAddr string
 func AssignTenant(podIP string, tenantName string) (resp *supervisor.Result, err error) {
 	defer func() {
 		if err != nil || (resp != nil && resp.HasErr) {
-			log.Printf("[error]failed to AssignTenant, grpc_err: %v  api_err: %v\n", err.Error(), resp.ErrInfo)
+			var err1, err2 string
+			if err != nil {
+				err1 = err.Error()
+			}
+			if resp != nil && resp.HasErr {
+				err2 = resp.ErrInfo
+			}
+			log.Printf("[error]failed to AssignTenant, grpc_err: %v  api_err: %v\n", err1, err2)
 		}
 	}()
 	if !IsSupClientMock {
-
-		conn, err := grpc.Dial(podIP+":"+SupervisorPort, grpc.WithInsecure(), grpc.WithBlock())
+		log.Printf("[AssignTenant]grpc dial addr: %v \n", podIP+":"+SupervisorPort)
+		conn, err := grpc.Dial(podIP+":"+SupervisorPort, grpc.WithInsecure(), grpc.FailOnNonTempDialError(true), grpc.WithBlock())
 		if err != nil {
 			return nil, err
 		}
@@ -40,10 +47,16 @@ func AssignTenant(podIP string, tenantName string) (resp *supervisor.Result, err
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 		defer cancel()
 		r, err := c.AssignTenant(ctx, &supervisor.AssignRequest{TenantID: tenantName, TidbStatusAddr: HardCodeEnvTidbStatusAddr, PdAddr: HardCodeEnvPdAddr})
-		// if err != nil {
-		// 	log.Printf("[error]AssignTenant fail: %v", err)
-		// 	return r, err
-		// }
+		if err != nil {
+			log.Printf("[error]AssignTenant fail: %v , podIP: %v \n", err, podIP)
+			return r, err
+		} else {
+			respStr := r.TenantID
+			if r.TenantID == "" {
+				respStr = "empty"
+			}
+			log.Printf("[AssignTenant]result: %v , podIP: %v \n", respStr, podIP)
+		}
 		// log.Printf("result: %s", r.HasErr)
 		return r, err
 	} else {
@@ -55,10 +68,18 @@ func AssignTenant(podIP string, tenantName string) (resp *supervisor.Result, err
 func UnassignTenant(podIP string, tenantName string) (resp *supervisor.Result, err error) {
 	defer func() {
 		if err != nil || (resp != nil && resp.HasErr) {
-			log.Printf("[error]failed to UnassignTenant, grpc_err: %v  api_err: %v\n", err.Error(), resp.ErrInfo)
+			var err1, err2 string
+			if err != nil {
+				err1 = err.Error()
+			}
+			if resp != nil && resp.HasErr {
+				err2 = resp.ErrInfo
+			}
+			log.Printf("[error]failed to UnassignTenant, grpc_err: %v  api_err: %v\n", err1, err2)
 		}
 	}()
 	if !IsSupClientMock {
+		log.Printf("[UnassignTenant]grpc dial addr: %v \n", podIP+":"+SupervisorPort)
 		conn, err := grpc.Dial(podIP+":"+SupervisorPort, grpc.WithInsecure(), grpc.WithBlock())
 		if err != nil {
 			return nil, err
@@ -72,10 +93,15 @@ func UnassignTenant(podIP string, tenantName string) (resp *supervisor.Result, e
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 		defer cancel()
 		r, err := c.UnassignTenant(ctx, &supervisor.UnassignRequest{AssertTenantID: tenantName})
-		// if err != nil {
-		// 	log.Printf("[error]AssignTenant fail: %v", err)
-		// 	return r, err
-		// }
+		if err != nil {
+			log.Printf("[error]UnassignTenant fail: %v, podIP:%v \n", err, podIP)
+		} else {
+			respStr := r.TenantID
+			if r.TenantID == "" {
+				respStr = "empty"
+			}
+			log.Printf("[UnAssignTenant]result: %v , podIP: %v \n", respStr, podIP)
+		}
 		// log.Printf("result: %s", r.HasErr)
 		return r, err
 	} else {
@@ -91,6 +117,7 @@ func GetCurrentTenant(podIP string) (resp *supervisor.GetTenantResponse, err err
 		}
 	}()
 	if !IsSupClientMock {
+		log.Printf("[GetCurrentTenant]grpc dial addr: %v \n", podIP+":"+SupervisorPort)
 		conn, err := grpc.Dial(podIP+":"+SupervisorPort, grpc.WithInsecure(), grpc.WithBlock())
 		if err != nil {
 			return nil, err
@@ -104,10 +131,15 @@ func GetCurrentTenant(podIP string) (resp *supervisor.GetTenantResponse, err err
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		r, err := c.GetCurrentTenant(ctx, &emptypb.Empty{})
-		// if err != nil {
-		// 	log.Printf("[error]AssignTenant fail: %v", err)
-		// 	return r, err
-		// }
+		if err != nil {
+			log.Printf("[error]GetCurrentTenant fail: %v, podIp: %v\n", err, podIP)
+		} else {
+			respStr := r.TenantID
+			if r.TenantID == "" {
+				respStr = "empty"
+			}
+			log.Printf("[GetTenant]result: %v , podIP: %v \n", respStr, podIP)
+		}
 		// log.Printf("result: %s", r.HasErr)
 		return r, err
 	} else {
