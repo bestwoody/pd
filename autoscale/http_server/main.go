@@ -2,17 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"github.com/tikv/pd/autoscale"
 	"io"
-	restclient "k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 )
 
 type SetStateResult struct {
@@ -29,7 +24,7 @@ type GetStateResult struct {
 }
 
 const (
-	TenantStateResumedString  = "resumed"
+	TenantStateResumedString  = "available"
 	TenantStateResumingString = "resuming"
 	TenantStatePausedString   = "paused"
 	TenantStatePausingString  = "pausing"
@@ -39,44 +34,56 @@ var (
 	cm *autoscale.ClusterManager
 )
 
-func outsideConfig() (*restclient.Config, error) {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-
-	// use the current context in kubeconfig
-	return clientcmd.BuildConfigFromFlags("", *kubeconfig)
-}
-
 func SetStateServer(w http.ResponseWriter, req *http.Request) {
 	tenantName := req.FormValue("tenantName")
 	ret := SetStateResult{}
 	if tenantName == "" {
 		tenantName = "t1"
 	}
-	state := req.FormValue("state")
-	// TODO: return logic
-	if state != "resume" && state != "pause" {
+	flag, currentState, _ := cm.AutoScaleMeta.GetTenantState(tenantName)
+	if !flag {
 		ret.HasError = 1
-		ret.ErrorInfo = "invalid state"
+		ret.ErrorInfo = "get state failed"
 		retJson, _ := json.Marshal(ret)
 		io.WriteString(w, string(retJson))
 		return
 	}
-	var flag bool
-	if state == "resume" {
+	state := req.FormValue("state")
+	if currentState == autoscale.TenantStatePaused && state == "resume" {
 		flag = cm.Resume(tenantName)
-	} else if state == "pause" {
+		if !flag {
+			ret.HasError = 1
+			ret.ErrorInfo = "resume failed"
+			retJson, _ := json.Marshal(ret)
+			io.WriteString(w, string(retJson))
+			return
+		}
+		_, currentState, _ = cm.AutoScaleMeta.GetTenantState(tenantName)
+		ret.State = convertStateString(currentState)
+		retJson, _ := json.Marshal(ret)
+		io.WriteString(w, string(retJson))
+		return
+	} else if currentState == autoscale.TenantStateResumed && state == "pause" {
 		flag = cm.Pause(tenantName)
+		if !flag {
+			ret.HasError = 1
+			ret.ErrorInfo = "pause failed"
+			retJson, _ := json.Marshal(ret)
+			io.WriteString(w, string(retJson))
+			return
+		}
+		_, currentState, _ = cm.AutoScaleMeta.GetTenantState(tenantName)
+		ret.State = convertStateString(currentState)
+		retJson, _ := json.Marshal(ret)
+		io.WriteString(w, string(retJson))
+		return
 	}
-	//current_state = Get
-	if !flag {
-
-	}
+	ret.HasError = 1
+	ret.State = convertStateString(currentState)
+	ret.ErrorInfo = "invalid set state"
+	retJson, _ := json.Marshal(ret)
+	io.WriteString(w, string(retJson))
+	return
 }
 
 func GetStateServer(w http.ResponseWriter, req *http.Request) {
@@ -85,25 +92,29 @@ func GetStateServer(w http.ResponseWriter, req *http.Request) {
 		tenantName = "t1"
 	}
 	ret := GetStateResult{}
-	//TODO find the target tenant
-	//ret.NumOfRNs = tenant.GetCntOfPods()
-	//state := tenant.GetState()
-	//if state == autoscale.TenantStateResumed {
-	//	ret.State = TenantStateResumedString
-	//} else if state == autoscale.TenantStateResuming {
-	//	ret.State = TenantStateResumingString
-	//} else if state == autoscale.TenantStatePaused {
-	//	ret.State = TenantStatePausedString
-	//} else if state == autoscale.TenantStatePausing {
-	//	ret.State = TenantStatePausingString
-	//}
-	//retJson, _ := json.Marshal(ret)
-	//io.WriteString(w, string(retJson))
-
-	ret.HasError = 1
-	ret.ErrorInfo = "tenant not found"
+	flag, state, numOfRNs := cm.AutoScaleMeta.GetTenantState(tenantName)
+	if !flag {
+		ret.HasError = 1
+		ret.ErrorInfo = "get state failed"
+		retJson, _ := json.Marshal(ret)
+		io.WriteString(w, string(retJson))
+		return
+	}
+	ret.NumOfRNs = numOfRNs
+	ret.State = convertStateString(state)
 	retJson, _ := json.Marshal(ret)
 	io.WriteString(w, string(retJson))
+}
+
+func convertStateString(state int32) string {
+	if state == autoscale.TenantStateResumed {
+		return TenantStateResumedString
+	} else if state == autoscale.TenantStateResuming {
+		return TenantStateResumingString
+	} else if state == autoscale.TenantStatePaused {
+		return TenantStatePausedString
+	}
+	return TenantStatePausingString
 }
 
 func main() {
