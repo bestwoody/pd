@@ -459,22 +459,10 @@ func initK8sEnv(Namespace string) (config *restclient.Config, K8sCli *kubernetes
 			panic(err.Error())
 		}
 	}
-	// _, err = K8sCli.CoreV1().Namespaces().Get(context.TODO(), Namespace, metav1.GetOptions{})
-	// if err != nil {
-	// 	_, err = K8sCli.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
-	// 		ObjectMeta: metav1.ObjectMeta{
-	// 			Name: Namespace,
-	// 			Labels: map[string]string{
-	// 				"ns": Namespace,
-	// 			}}}, metav1.CreateOptions{})
-	// 	if err != nil {
-	// 		panic(err.Error())
-	// 	}
-	// }
 	return config, K8sCli, MetricsCli, Cli
 }
 
-// podstat:   init->prewarmed<--->ComputePod
+// podstat:   init---->prewarmed<--->ComputePod
 
 func NewClusterManager() *ClusterManager {
 	namespace := "tiflash-autoscale"

@@ -284,6 +284,8 @@ func (c *AutoScaleMeta) ScanStateOfPods() {
 	}
 	c.mu.Unlock()
 	var wg sync.WaitGroup
+	statesDeltaMap := make(map[string]string)
+	var muOfStatesDeltaMap sync.Mutex
 	for _, v := range pods {
 		if v.IP != "" {
 			wg.Add(1)
@@ -297,12 +299,20 @@ func (c *AutoScaleMeta) ScanStateOfPods() {
 					c.mu.Lock()
 					c.updateLocalMetaPodOfTenant(v.Name, v, resp.GetTenantID())
 					c.mu.Unlock()
+					muOfStatesDeltaMap.Lock()
+					if resp.GetTenantID() == "" {
+						statesDeltaMap[v.Name] = ConfigMapPodStateStr(CmRnPodStateUnassigned, "")
+					} else {
+						statesDeltaMap[v.Name] = ConfigMapPodStateStr(CmRnPodStateAssigned, resp.GetTenantID())
+					}
+					muOfStatesDeltaMap.Unlock()
 					// }
 				}
 			}(v)
 		}
 	}
 	wg.Wait()
+	c.setConfigMapStateBatch(statesDeltaMap)
 }
 
 func (c *AutoScaleMeta) initConfigMap() {
@@ -310,7 +320,6 @@ func (c *AutoScaleMeta) initConfigMap() {
 	var err error
 	c.configMap, err = c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Get(context.TODO(), configMapName, metav1.GetOptions{})
 	if err != nil {
-		// panic(err.Error())
 		c.configMap = &v1.ConfigMap{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "ConfigMap",
@@ -321,7 +330,6 @@ func (c *AutoScaleMeta) initConfigMap() {
 			},
 			Data: map[string]string{},
 		}
-		// for {
 		// get pods in all the namespaces by omitting namespace
 		// Or specify namespace to get pods in particular namespace
 		c.configMap, err = c.k8sCli.CoreV1().ConfigMaps("tiflash-autoscale").Create(context.TODO(), c.configMap, metav1.CreateOptions{})
