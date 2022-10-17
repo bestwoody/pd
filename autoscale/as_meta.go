@@ -369,6 +369,7 @@ func (c *AutoScaleMeta) Pause(tenant string) bool {
 		return false
 	}
 	if v.SyncStatePausing() {
+		log.Printf("[AutoScaleMeta] Pausing %v\n", tenant)
 		go c.removePodFromTenant(v.GetCntOfPods(), tenant, true)
 		return true
 	} else {
@@ -385,6 +386,7 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 		return false
 	}
 	if v.SyncStateResuming() {
+		log.Printf("[AutoScaleMeta] Resuming %v\n", tenant)
 		// TODO ensure there is no pods now
 		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer, true)
 		return true
@@ -714,6 +716,23 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 	}
 	tenantDesc.ResizeMu.Lock()
 	defer tenantDesc.ResizeMu.Unlock()
+	// check validation of state
+	if isResume { // remove all pods of tenant if we want pause
+		state := tenantDesc.GetState()
+		if state != TenantStateResuming {
+			// ERROR!!!
+			log.Printf("[error][removePodFromTenant] failed to resume: 'tenantDesc.GetState() != TenantStateResuming', state:%v \n ", state)
+			return -1
+		}
+	} else {
+		state := tenantDesc.GetState()
+		if state != TenantStateResumed {
+			// ERROR!!!
+			log.Printf("[error][addPodIntoTenant] failed: 'tenantDesc.GetState() != TenantStateResumed', state:%v \n ", state)
+			return -1
+		}
+	}
+
 	// TODO do we need add only MinPods if we want resume from pause
 	cnt := addCnt
 	podsToAssign := make([]*PodDesc, 0, addCnt)
@@ -802,9 +821,25 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string, isPaus
 	}
 	tenantDesc.ResizeMu.Lock()
 	defer tenantDesc.ResizeMu.Unlock()
+
+	// check validation of state
 	if isPause { // remove all pods of tenant if we want pause
 		removeCnt = tenantDesc.GetCntOfPods()
+		state := tenantDesc.GetState()
+		if state != TenantStatePausing {
+			// ERROR!!!
+			log.Printf("[error][removePodFromTenant] failed to pause: 'tenantDesc.GetState() != TenantStatePausing', state:%v \n ", state)
+			return -1
+		}
+	} else {
+		state := tenantDesc.GetState()
+		if state != TenantStateResumed {
+			// ERROR!!!
+			log.Printf("[error][removePodFromTenant] failed: 'tenantDesc.GetState() != TenantStateResumed', state:%v \n ", state)
+			return -1
+		}
 	}
+
 	cnt := removeCnt
 	podsToUnassign := make([]*PodDesc, 0, removeCnt)
 

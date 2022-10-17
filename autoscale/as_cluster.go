@@ -157,7 +157,7 @@ func (c *ClusterManager) analyzeMetrics() {
 		}
 		tenants := c.AutoScaleMeta.GetTenants()
 		for _, tenant := range tenants {
-			if tenant.GetState() == TenantStatePaused {
+			if tenant.GetState() != TenantStateResumed { // tenant not available
 				continue
 			}
 			cntOfPods := tenant.GetCntOfPods()

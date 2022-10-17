@@ -46,6 +46,7 @@ func SetStateServer(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	state := req.FormValue("state")
+	log.Printf("[HTTP]SetStateServer, state: %v\n", state)
 	if currentState == TenantStatePaused && state == "resume" {
 		flag = Cm4Http.Resume(tenantName)
 		if !flag {
@@ -100,7 +101,9 @@ func GetStateServer(w http.ResponseWriter, req *http.Request) {
 	ret.NumOfRNs = numOfRNs
 	ret.State = convertStateString(state)
 	retJson, _ := json.Marshal(ret)
-	io.WriteString(w, string(retJson))
+	retJsonStr := string(retJson)
+	log.Printf("[http]resp of getstate, '%v' \n", retJsonStr)
+	io.WriteString(w, retJsonStr)
 }
 
 func convertStateString(state int32) string {
@@ -123,6 +126,7 @@ func RunAutoscaleHttpServer() {
 
 	http.HandleFunc("/setstate", SetStateServer)
 	http.HandleFunc("/getstate", GetStateServer)
+	log.Printf("[HTTP]ListenAndServe 8081")
 	err := http.ListenAndServe(":8081", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
