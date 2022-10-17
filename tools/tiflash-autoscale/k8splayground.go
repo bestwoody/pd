@@ -309,7 +309,7 @@ func main2() {
 			hasNew = false
 			tArr := []string{"t1", "t2"}
 			for _, tName := range tArr {
-				stats1 := as_meta.ComputeStatisticsOfTenant(tName, tsContainer, "play")
+				stats1, _ := as_meta.ComputeStatisticsOfTenant(tName, tsContainer, "play")
 				log.Printf("[Tenant]%v statistics: cpu: %v %v mem: %v %v\n", tName,
 					stats1[0].Avg(),
 					stats1[0].Cnt(),

@@ -336,7 +336,7 @@ func (c *ClusterManager) initK8sComponents() {
 					// pod anti affinity
 					Spec: v1.PodSpec{
 						NodeSelector: map[string]string{
-							"node.kubernetes.io/instance-type": "m6a.2xlarge",
+							"node.kubernetes.io/instance-type": "m6a.2xlarge", // TODO use a non-hack way to bind readnode pod to specific nodes
 						},
 						Affinity: &v1.Affinity{
 							PodAntiAffinity: &v1.PodAntiAffinity{
