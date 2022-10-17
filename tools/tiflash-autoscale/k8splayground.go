@@ -393,7 +393,11 @@ func main() {
 	log.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
 	log.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
 	cm := autoscale.NewClusterManager()
+	autoscale.Cm4Http = cm
+
+	// run http API server
 	go autoscale.RunAutoscaleHttpServer()
+
 	// time.Sleep(3600 * time.Second)
 	cm.Wait()
 	cm.Shutdown()

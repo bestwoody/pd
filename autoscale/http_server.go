@@ -5,8 +5,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-
-	"github.com/tikv/pd/autoscale"
 )
 
 type SetStateResult struct {
@@ -30,7 +28,7 @@ const (
 )
 
 var (
-	cm *autoscale.ClusterManager
+	Cm4Http *ClusterManager
 )
 
 func SetStateServer(w http.ResponseWriter, req *http.Request) {
@@ -39,7 +37,7 @@ func SetStateServer(w http.ResponseWriter, req *http.Request) {
 	if tenantName == "" {
 		tenantName = "t1"
 	}
-	flag, currentState, _ := cm.AutoScaleMeta.GetTenantState(tenantName)
+	flag, currentState, _ := Cm4Http.AutoScaleMeta.GetTenantState(tenantName)
 	if !flag {
 		ret.HasError = 1
 		ret.ErrorInfo = "get state failed"
@@ -48,8 +46,8 @@ func SetStateServer(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	state := req.FormValue("state")
-	if currentState == autoscale.TenantStatePaused && state == "resume" {
-		flag = cm.Resume(tenantName)
+	if currentState == TenantStatePaused && state == "resume" {
+		flag = Cm4Http.Resume(tenantName)
 		if !flag {
 			ret.HasError = 1
 			ret.ErrorInfo = "resume failed"
@@ -57,13 +55,13 @@ func SetStateServer(w http.ResponseWriter, req *http.Request) {
 			io.WriteString(w, string(retJson))
 			return
 		}
-		_, currentState, _ = cm.AutoScaleMeta.GetTenantState(tenantName)
+		_, currentState, _ = Cm4Http.AutoScaleMeta.GetTenantState(tenantName)
 		ret.State = convertStateString(currentState)
 		retJson, _ := json.Marshal(ret)
 		io.WriteString(w, string(retJson))
 		return
-	} else if currentState == autoscale.TenantStateResumed && state == "pause" {
-		flag = cm.Pause(tenantName)
+	} else if currentState == TenantStateResumed && state == "pause" {
+		flag = Cm4Http.Pause(tenantName)
 		if !flag {
 			ret.HasError = 1
 			ret.ErrorInfo = "pause failed"
@@ -71,7 +69,7 @@ func SetStateServer(w http.ResponseWriter, req *http.Request) {
 			io.WriteString(w, string(retJson))
 			return
 		}
-		_, currentState, _ = cm.AutoScaleMeta.GetTenantState(tenantName)
+		_, currentState, _ = Cm4Http.AutoScaleMeta.GetTenantState(tenantName)
 		ret.State = convertStateString(currentState)
 		retJson, _ := json.Marshal(ret)
 		io.WriteString(w, string(retJson))
@@ -91,7 +89,7 @@ func GetStateServer(w http.ResponseWriter, req *http.Request) {
 		tenantName = "t1"
 	}
 	ret := GetStateResult{}
-	flag, state, numOfRNs := cm.AutoScaleMeta.GetTenantState(tenantName)
+	flag, state, numOfRNs := Cm4Http.AutoScaleMeta.GetTenantState(tenantName)
 	if !flag {
 		ret.HasError = 1
 		ret.ErrorInfo = "get state failed"
@@ -106,11 +104,11 @@ func GetStateServer(w http.ResponseWriter, req *http.Request) {
 }
 
 func convertStateString(state int32) string {
-	if state == autoscale.TenantStateResumed {
+	if state == TenantStateResumed {
 		return TenantStateResumedString
-	} else if state == autoscale.TenantStateResuming {
+	} else if state == TenantStateResuming {
 		return TenantStateResumingString
-	} else if state == autoscale.TenantStatePaused {
+	} else if state == TenantStatePaused {
 		return TenantStatePausedString
 	}
 	return TenantStatePausingString
@@ -121,7 +119,7 @@ func RunAutoscaleHttpServer() {
 	// autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
 	// fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
 	// fmt.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
-	// cm = autoscale.NewClusterManager()
+	// Cm4Http = autoscale.NewClusterManager()
 
 	http.HandleFunc("/setstate", SetStateServer)
 	http.HandleFunc("/getstate", GetStateServer)

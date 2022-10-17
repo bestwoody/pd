@@ -141,6 +141,7 @@ type TenantDesc struct {
 	pods        map[string]*PodDesc
 	State       int32
 	mu          sync.Mutex
+	ResizeMu    sync.Mutex
 }
 
 func (c *TenantDesc) GetCntOfPods() int {
@@ -368,7 +369,7 @@ func (c *AutoScaleMeta) Pause(tenant string) bool {
 		return false
 	}
 	if v.SyncStatePausing() {
-		go c.removePodFromTenant(v.GetCntOfPods(), tenant)
+		go c.removePodFromTenant(v.GetCntOfPods(), tenant, true)
 		return true
 	} else {
 		return false
@@ -385,7 +386,7 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 	}
 	if v.SyncStateResuming() {
 		// TODO ensure there is no pods now
-		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer)
+		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer, true)
 		return true
 	} else {
 		return false
@@ -648,9 +649,9 @@ func (c *AutoScaleMeta) ResizePodsOfTenant(from int, target int, tenant string, 
 	log.Printf("[AutoScaleMeta]ResizePodsOfTenant from %v to %v , tenant:%v\n", from, target, tenant)
 	// TODO assert and validate "from" equal to current cntOfPod
 	if target > from {
-		c.addPodIntoTenant(target-from, tenant, tsContainer)
+		c.addPodIntoTenant(target-from, tenant, tsContainer, false)
 	} else if target < from {
-		c.removePodFromTenant(from-target, tenant)
+		c.removePodFromTenant(from-target, tenant, false)
 	}
 }
 
@@ -694,10 +695,9 @@ func (c *AutoScaleMeta) updateLocalMetaPodOfTenant(podName string, podDesc *PodD
 
 // return cnt fail to add
 // -1 is error
-func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer *TimeSeriesContainer) int {
+func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer *TimeSeriesContainer, isResume bool) int {
 	log.Printf("[AutoScaleMeta::addPodIntoTenant] %v %v \n", addCnt, tenant)
-	cnt := addCnt
-	podsToAssign := make([]*PodDesc, 0, addCnt)
+
 	// tMu := c.getTenantLock(tenant)
 	// if tMu == nil {
 	// 	return -1
@@ -712,6 +712,11 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 		// tMu.Unlock()
 		return -1
 	}
+	tenantDesc.ResizeMu.Lock()
+	defer tenantDesc.ResizeMu.Unlock()
+	// TODO do we need add only MinPods if we want resume from pause
+	cnt := addCnt
+	podsToAssign := make([]*PodDesc, 0, addCnt)
 
 	podnames := c.PrewarmPods.GetPodNames()
 
@@ -771,16 +776,17 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 		c.PrewarmPods.SetPod(v.Name, v)
 		cnt++
 	}
-	tenantDesc.SyncStateResumed()
+	if isResume {
+		tenantDesc.SyncStateResumed()
+	}
 	c.mu.Unlock()
 	c.setConfigMapStateBatch(statesDeltaMap)
 	return cnt
 }
 
-func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
+func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string, isPause bool) int {
 	log.Printf("[AutoScaleMeta::removePodFromTenant] %v %v \n", removeCnt, tenant)
-	cnt := removeCnt
-	podsToUnassign := make([]*PodDesc, 0, removeCnt)
+
 	// tMu := c.getTenantLock(tenant)
 	// if tMu == nil {
 	// 	return -1
@@ -794,6 +800,13 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 		c.mu.Unlock()
 		return -1
 	}
+	tenantDesc.ResizeMu.Lock()
+	defer tenantDesc.ResizeMu.Unlock()
+	if isPause { // remove all pods of tenant if we want pause
+		removeCnt = tenantDesc.GetCntOfPods()
+	}
+	cnt := removeCnt
+	podsToUnassign := make([]*PodDesc, 0, removeCnt)
 
 	podnames := tenantDesc.GetPodNames()
 
@@ -842,7 +855,9 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 		tenantDesc.SetPod(v.Name, v)
 		cnt++
 	}
-	tenantDesc.SyncStatePaused()
+	if isPause {
+		tenantDesc.SyncStatePaused()
+	}
 	c.mu.Unlock()
 	c.setConfigMapStateBatch(statesDeltaMap)
 	return cnt
