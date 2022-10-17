@@ -297,13 +297,13 @@ func (c *AutoScaleMeta) ScanStateOfPods() {
 				} else {
 					// if resp.GetTenantID() != "" {
 					c.mu.Lock()
-					c.updateLocalMetaPodOfTenant(v.Name, v, resp.GetTenantID())
+					c.updateLocalMetaPodOfTenant(podDesc.Name, podDesc, resp.GetTenantID())
 					c.mu.Unlock()
 					muOfStatesDeltaMap.Lock()
 					if resp.GetTenantID() == "" {
-						statesDeltaMap[v.Name] = ConfigMapPodStateStr(CmRnPodStateUnassigned, "")
+						statesDeltaMap[podDesc.Name] = ConfigMapPodStateStr(CmRnPodStateUnassigned, "")
 					} else {
-						statesDeltaMap[v.Name] = ConfigMapPodStateStr(CmRnPodStateAssigned, resp.GetTenantID())
+						statesDeltaMap[podDesc.Name] = ConfigMapPodStateStr(CmRnPodStateAssigned, resp.GetTenantID())
 					}
 					muOfStatesDeltaMap.Unlock()
 					// }
