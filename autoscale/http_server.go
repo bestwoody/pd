@@ -1,13 +1,12 @@
-package main
+package autoscale
 
 import (
 	"encoding/json"
-	"fmt"
-	"github.com/tikv/pd/autoscale"
 	"io"
 	"log"
 	"net/http"
-	"os"
+
+	"github.com/tikv/pd/autoscale"
 )
 
 type SetStateResult struct {
@@ -117,12 +116,12 @@ func convertStateString(state int32) string {
 	return TenantStatePausingString
 }
 
-func main() {
-	autoscale.HardCodeEnvPdAddr = os.Getenv("PD_ADDR")
-	autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
-	fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
-	fmt.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
-	cm = autoscale.NewClusterManager()
+func RunAutoscaleHttpServer() {
+	// autoscale.HardCodeEnvPdAddr = os.Getenv("PD_ADDR")
+	// autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
+	// fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
+	// fmt.Printf("env.TIDB_STATUS_ADDR: %v\n", autoscale.HardCodeEnvTidbStatusAddr)
+	// cm = autoscale.NewClusterManager()
 
 	http.HandleFunc("/setstate", SetStateServer)
 	http.HandleFunc("/getstate", GetStateServer)
