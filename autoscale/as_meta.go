@@ -20,8 +20,10 @@ const (
 	PodStateUnassigned      = 0
 	PodStateAssigned        = 1
 	PodStateInit            = 2
-	TenantStateResume       = 0
-	TenantStatePause        = 1
+	TenantStateResumed      = 0
+	TenantStateResuming     = 1
+	TenantStatePaused       = 2
+	TenantStatePausing      = 3
 	CmRnPodStateUnassigned  = 0
 	CmRnPodStateUnassigning = 1
 	CmRnPodStateAssigning   = 2
@@ -188,12 +190,20 @@ func (c *TenantDesc) switchState(from int32, to int32) bool {
 	return atomic.CompareAndSwapInt32(&c.State, from, to)
 }
 
-func (c *TenantDesc) SyncStatePause() bool {
-	return c.switchState(TenantStateResume, TenantStatePause)
+func (c *TenantDesc) SyncStatePausing() bool {
+	return c.switchState(TenantStateResumed, TenantStatePausing)
 }
 
-func (c *TenantDesc) SyncStateResume() bool {
-	return c.switchState(TenantStatePause, TenantStateResume)
+func (c *TenantDesc) SyncStatePaused() bool {
+	return c.switchState(TenantStatePausing, TenantStatePaused)
+}
+
+func (c *TenantDesc) SyncStateResuming() bool {
+	return c.switchState(TenantStatePaused, TenantStateResuming)
+}
+
+func (c *TenantDesc) SyncStateResumed() bool {
+	return c.switchState(TenantStateResuming, TenantStateResumed)
 }
 
 func (c *TenantDesc) GetState() int32 {
@@ -357,7 +367,7 @@ func (c *AutoScaleMeta) Pause(tenant string) bool {
 	if !ok {
 		return false
 	}
-	if v.SyncStatePause() {
+	if v.SyncStatePausing() {
 		go c.removePodFromTenant(v.GetCntOfPods(), tenant)
 		return true
 	} else {
@@ -373,13 +383,23 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 	if !ok {
 		return false
 	}
-	if v.SyncStateResume() {
+	if v.SyncStateResuming() {
 		// TODO ensure there is no pods now
 		go c.addPodIntoTenant(v.MinCntOfPod, tenant, tsContainer)
 		return true
 	} else {
 		return false
 	}
+}
+
+func (c *AutoScaleMeta) GetTenantState(tenant string) (bool, int32, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.tenantMap[tenant]
+	if !ok {
+		return false, 0, 0
+	}
+	return true, v.GetState(), v.GetCntOfPods()
 }
 
 // func (c *AutoScaleMeta) GetState(tenant string) string {
@@ -686,7 +706,7 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 	// defer tMu.Unlock()
 	c.mu.Lock()
 	// check if tenant is valid again to prevent it has been removed
-	_, ok := c.tenantMap[tenant]
+	tenantDesc, ok := c.tenantMap[tenant]
 	if !ok {
 		c.mu.Unlock()
 		// tMu.Unlock()
@@ -751,6 +771,7 @@ func (c *AutoScaleMeta) addPodIntoTenant(addCnt int, tenant string, tsContainer 
 		c.PrewarmPods.SetPod(v.Name, v)
 		cnt++
 	}
+	tenantDesc.SyncStateResumed()
 	c.mu.Unlock()
 	c.setConfigMapStateBatch(statesDeltaMap)
 	return cnt
@@ -821,6 +842,7 @@ func (c *AutoScaleMeta) removePodFromTenant(removeCnt int, tenant string) int {
 		tenantDesc.SetPod(v.Name, v)
 		cnt++
 	}
+	tenantDesc.SyncStatePaused()
 	c.mu.Unlock()
 	c.setConfigMapStateBatch(statesDeltaMap)
 	return cnt
