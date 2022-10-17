@@ -927,16 +927,17 @@ func (c *AutoScaleMeta) UpdateTenant4Test(podName string, newTenant string) bool
 	return true
 }
 
-func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSeriesContainer, caller string) []AvgSigma {
+func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSeriesContainer, caller string) ([]AvgSigma, map[string]float64) {
 	c.mu.Lock()
 
 	tenantDesc, ok := c.tenantMap[tenantName]
 	if !ok {
 		c.mu.Unlock()
-		return nil
+		return nil, nil
 	} else {
 		podsOfTenant := tenantDesc.GetPodNames()
 		c.mu.Unlock()
+		podCpuMap := make(map[string]float64)
 		ret := make([]AvgSigma, CapacityOfStaticsAvgSigma)
 		for _, podName := range podsOfTenant {
 
@@ -963,10 +964,22 @@ func (c *AutoScaleMeta) ComputeStatisticsOfTenant(tenantName string, tsc *TimeSe
 			// 			tenantName, podName, stats[0].Avg(), stats[0].Cnt(), stats[1].Avg(), stats[1].Cnt())
 			// 	}
 			// }
+			statsOfPod := tsc.GetStatisticsOfPod(podName)
+			if statsOfPod == nil {
+				statsOfPod = make([]AvgSigma, CapacityOfStaticsAvgSigma)
+			}
+			// TODO hope for a better idea to handle case of new Pod without metrics
+			for i := range statsOfPod {
+				statsOfPod[i] = AvgSigma{statsOfPod[i].Avg(), 1}
+			}
+			if len(statsOfPod) > 0 {
+				podCpuMap[podName] = statsOfPod[0].Avg()
+				// log.Printf("[debug]avg cpu of pod %v : %v, %v\n", podName, statsOfPod[0].Avg(), statsOfPod[0].Cnt())
+			}
+			Merge(ret, statsOfPod)
 
-			Merge(ret, tsc.GetStatisticsOfPod(podName))
 		}
-		return ret
+		return ret, podCpuMap
 	}
 }
 

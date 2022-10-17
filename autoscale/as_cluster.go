@@ -130,7 +130,7 @@ func (c *ClusterManager) collectMetrics() {
 			hasNew = false
 			tArr := c.AutoScaleMeta.GetTenantNames()
 			for _, tName := range tArr {
-				stats := as_meta.ComputeStatisticsOfTenant(tName, tsContainer, "collectMetrics")
+				stats, _ := as_meta.ComputeStatisticsOfTenant(tName, tsContainer, "collectMetrics")
 				log.Printf("[collectMetrics]Tenant %v statistics: cpu: %v %v mem: %v %v time_range:%v~%v\n", tName,
 					stats[0].Avg(),
 					stats[0].Cnt(),
@@ -165,7 +165,7 @@ func (c *ClusterManager) analyzeMetrics() {
 				log.Printf("[analyzeMetrics] StateResume and tenant.GetCntOfPods() is 0, resume pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
 				c.AutoScaleMeta.ResizePodsOfTenant(0, tenant.MinCntOfPod, tenant.Name, c.tsContainer)
 			} else {
-				stats := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer, "analyzeMetrics")
+				stats, podCpuMap := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer, "analyzeMetrics")
 				cpuusage := stats[0].Avg()
 
 				//Mock Metrics
@@ -174,8 +174,8 @@ func (c *ClusterManager) analyzeMetrics() {
 				// cpuusage := MockComputeStatisticsOfTenant(CoreOfPod, cntOfPods, tenant.MaxCntOfPod)
 				if lastTs != curTs {
 					// log.Printf("[analyzeMetrics]ComputeStatisticsOfTenant, pods Of Tenant %v: %+v\n", tenant.Name, tenant.GetPodNames())
-					log.Printf("[analyzeMetrics]ComputeStatisticsOfTenant, Tenant %v , cpu usage: %v %v , pods: %+v \n", tenant.Name,
-						stats[0].Avg(), stats[0].Cnt(), tenant.GetPodNames())
+					log.Printf("[analyzeMetrics]ComputeStatisticsOfTenant, Tenant %v , cpu usage: %v %v , PodsCpuMap: %+v \n", tenant.Name,
+						stats[0].Avg(), stats[0].Cnt(), podCpuMap)
 					// log.Printf("[ComputeStatisticsOfTenant] cpu usage: %v\n", cpuusage)
 					lastTs = curTs
 				}

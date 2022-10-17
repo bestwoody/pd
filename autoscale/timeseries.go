@@ -112,6 +112,9 @@ func (cur *AvgSigma) Add(v float64) {
 }
 
 func (cur *AvgSigma) Avg() float64 {
+	if cur.cnt <= 0 {
+		return 0
+	}
 	return cur.sum / float64(cur.cnt)
 }
 
