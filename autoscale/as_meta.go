@@ -393,6 +393,8 @@ func (c *AutoScaleMeta) Resume(tenant string, tsContainer *TimeSeriesContainer) 
 }
 
 func (c *AutoScaleMeta) GetTenantState(tenant string) (bool, int32, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	v, ok := c.tenantMap[tenant]
 	if !ok {
 		return false, 0, 0
