@@ -28,9 +28,7 @@ const (
 )
 
 var (
-	Cm4Http  *ClusterManager
-	certPath = "autoscale/cert.pem"
-	keyPath  = "autoscale/key.pem"
+	Cm4Http *ClusterManager
 )
 
 func SetStateServer(w http.ResponseWriter, req *http.Request) {
@@ -122,7 +120,7 @@ func convertStateString(state int32) string {
 }
 
 func RunAutoscaleHttpServer() {
-	log.Printf("[https]Access-Control-Allow-Origin is enabled\n")
+	log.Printf("[http]Access-Control-Allow-Origin is enabled\n")
 	// autoscale.HardCodeEnvPdAddr = os.Getenv("PD_ADDR")
 	// autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
 	// fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
@@ -131,8 +129,8 @@ func RunAutoscaleHttpServer() {
 
 	http.HandleFunc("/setstate", SetStateServer)
 	http.HandleFunc("/getstate", GetStateServer)
-	log.Printf("[HTTPS]ListenAndServe 8081")
-	err := http.ListenAndServeTLS(":8081", certPath, keyPath, nil)
+	log.Printf("[HTTP]ListenAndServe 8081")
+	err := http.ListenAndServe(":8081", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
