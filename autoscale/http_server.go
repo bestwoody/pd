@@ -32,6 +32,7 @@ var (
 )
 
 func SetStateServer(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	tenantName := req.FormValue("tenantName")
 	ret := SetStateResult{}
 	if tenantName == "" {
@@ -85,6 +86,7 @@ func SetStateServer(w http.ResponseWriter, req *http.Request) {
 }
 
 func GetStateServer(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	tenantName := req.FormValue("tenantName")
 	if tenantName == "" {
 		tenantName = "t1"
@@ -118,6 +120,7 @@ func convertStateString(state int32) string {
 }
 
 func RunAutoscaleHttpServer() {
+	log.Printf("[http]Access-Control-Allow-Origin is enabled\n")
 	// autoscale.HardCodeEnvPdAddr = os.Getenv("PD_ADDR")
 	// autoscale.HardCodeEnvTidbStatusAddr = os.Getenv("TIDB_STATUS_ADDR")
 	// fmt.Printf("env.PD_ADDR: %v\n", autoscale.HardCodeEnvPdAddr)
