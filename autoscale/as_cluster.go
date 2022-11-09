@@ -161,9 +161,9 @@ func (c *ClusterManager) analyzeMetrics() {
 				continue
 			}
 			cntOfPods := tenant.GetCntOfPods()
-			if cntOfPods == 0 {
-				log.Printf("[analyzeMetrics] StateResume and tenant.GetCntOfPods() is 0, resume pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
-				c.AutoScaleMeta.ResizePodsOfTenant(0, tenant.MinCntOfPod, tenant.Name, c.tsContainer)
+			if cntOfPods < tenant.MinCntOfPod {
+				log.Printf("[analyzeMetrics] StateResume and cntOfPods < tenant.MinCntOfPo, add more pods, minCntOfPods:%v tenant: %v\n", tenant.MinCntOfPod, tenant.Name)
+				c.AutoScaleMeta.ResizePodsOfTenant(cntOfPods, tenant.MinCntOfPod, tenant.Name, c.tsContainer)
 			} else {
 				stats, podCpuMap := c.AutoScaleMeta.ComputeStatisticsOfTenant(tenant.Name, c.tsContainer, "analyzeMetrics")
 				cpuusage := stats[0].Avg()

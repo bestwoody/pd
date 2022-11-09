@@ -270,7 +270,7 @@ func NewAutoScaleMeta(config *restclient.Config) *AutoScaleMeta {
 }
 
 func (c *AutoScaleMeta) loadTenants() {
-	c.SetupTenant("t1", 1, 4)
+	c.SetupTenant("t1", 2, 4)
 	log.Printf("loadTenant, SetupTenant(t1, 1, 4)\n")
 	//TODO load tenants from config of control panel
 }
